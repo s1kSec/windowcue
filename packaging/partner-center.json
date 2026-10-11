@@ -1,0 +1,19 @@
+{
+  "Version": "1.0.0.0",
+  "CN": {
+    "IdentityName": "s1ksec.WindowCue",
+    "Publisher": "CN=4A7335E9-E26F-4D4C-9B00-85C55B534682",
+    "PublisherDisplayName": "s1ksec",
+    "DisplayName": "WindowCue",
+    "ExpectedPackageFamilyName": "s1ksec.WindowCue_14ska59yrcwza",
+    "StoreId": "9NGPFSSGL2JX"
+  },
+  "EN": {
+    "IdentityName": null,
+    "Publisher": "CN=4A7335E9-E26F-4D4C-9B00-85C55B534682",
+    "PublisherDisplayName": "s1ksec",
+    "DisplayName": null,
+    "ExpectedPackageFamilyName": null,
+    "StoreId": null
+  }
+}

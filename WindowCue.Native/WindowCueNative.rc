@@ -1,0 +1,7 @@
+#include "resource.h"
+#include <windows.h>
+
+IDI_WINDOWCUE ICON "..\\WindowCue\\Assets\\WindowCue.ico"
+IDR_SUN_SVG RCDATA "assets\\sun.svg"
+IDR_MOON_SVG RCDATA "assets\\moon.svg"
+1 RT_MANIFEST "app.manifest"

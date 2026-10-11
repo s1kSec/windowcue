@@ -1,0 +1,9 @@
+* text=auto
+*.png binary
+*.ico binary
+
+# Keep the published privacy policy and its evidence byte-for-byte unchanged.
+/PRIVACY.md -text
+/PRIVACY-AUDIT.md -text
+/packaging/PRIVACY.md -text
+/packaging/PRIVACY-AUDIT.md -text
