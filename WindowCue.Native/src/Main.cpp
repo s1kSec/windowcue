@@ -123,6 +123,7 @@ struct AppState {
     bool trackingMouse{};
     bool windowActive{true};
     bool initialLayout{true};
+    bool resizingForContent{};
     bool draggingScrollbar{};
     bool darkMode{true};
     bool themeButtonHovered{};
@@ -692,17 +693,50 @@ void RegisterThumbnails() {
     }
 }
 
+struct GridLayoutMetrics {
+    int titleHeight{Scale(34)};
+    int margin{Scale(12)};
+    int bindingHeight{Scale(70)};
+    int previewTopGap{Scale(7)};
+    int bindingGap{Scale(8)};
+    int cardWidth{Scale(194)};
+    int cardHeight{Scale(146)};
+    int cardGap{Scale(8)};
+    int previewInset{Scale(7)};
+    int cardInset{Scale(2)};
+    int scrollbarSpace{Scale(14)};
+
+    int Columns(int clientWidth) const {
+        int availableWidth = std::max(cardWidth,
+            clientWidth - margin * 2 - previewInset * 2 - scrollbarSpace);
+        return std::max(1, (availableWidth + cardGap) / (cardWidth + cardGap));
+    }
+
+    int ContentHeight(size_t count, int clientWidth) const {
+        if (!count) return 0;
+        int columns = Columns(clientWidth);
+        int rows = (static_cast<int>(count) + columns - 1) / columns;
+        return rows * cardHeight + (rows - 1) * cardGap + cardInset * 2;
+    }
+
+    int ClientHeight(size_t count, int clientWidth) const {
+        return titleHeight + previewTopGap + previewInset * 2 + bindingGap +
+               bindingHeight + margin + ContentHeight(count, clientWidth);
+    }
+};
+
 void Layout() {
     if (!g.hwnd) return;
     RECT client{};
     GetClientRect(g.hwnd, &client);
-    int titleHeight = Scale(34);
-    int margin = Scale(12);
-    int bindingHeight = Scale(70);
-    int cardWidth = Scale(194);
-    int cardHeight = Scale(146);
-    int cardGap = Scale(8);
-    int previewInset = Scale(7);
+    GridLayoutMetrics metrics;
+    int titleHeight = metrics.titleHeight;
+    int margin = metrics.margin;
+    int bindingHeight = metrics.bindingHeight;
+    int cardWidth = metrics.cardWidth;
+    int cardHeight = metrics.cardHeight;
+    int cardGap = metrics.cardGap;
+    int previewInset = metrics.previewInset;
     int captionWidth = Scale(46);
 
     g.titleRect = MakeRect(0, 0, client.right, titleHeight);
@@ -733,8 +767,8 @@ void Layout() {
                                  g.minButtonRect.left, titleHeight);
     g.bindingRect = MakeRect(margin, client.bottom - margin - bindingHeight,
                              client.right - margin, client.bottom - margin);
-    g.previewOuter = MakeRect(margin, titleHeight + Scale(7), client.right - margin,
-                              g.bindingRect.top - Scale(8));
+    g.previewOuter = MakeRect(margin, titleHeight + metrics.previewTopGap,
+                              client.right - margin, g.bindingRect.top - metrics.bindingGap);
     g.previewInner = g.previewOuter;
     InflateRect(&g.previewInner, -previewInset, -previewInset);
 
@@ -747,16 +781,13 @@ void Layout() {
     g.hotkeyRect = MakeRect(g.bindButtonRect.left - Scale(10) - inputWidth, controlTop,
                             g.bindButtonRect.left - Scale(10), controlTop + controlHeight);
 
-    int availableWidth = std::max(cardWidth, RectWidth(g.previewInner) - Scale(14));
-    int columns = std::max(1, (availableWidth + cardGap) / (cardWidth + cardGap));
-    int rows = g.windows.empty() ? 0 :
-        (static_cast<int>(g.windows.size()) + columns - 1) / columns;
-    int contentHeight = rows > 0 ? rows * (cardHeight + cardGap) - cardGap : 0;
+    int columns = metrics.Columns(RectWidth(client));
+    int contentHeight = metrics.ContentHeight(g.windows.size(), RectWidth(client));
     g.maxScroll = std::max(0, contentHeight - RectHeight(g.previewInner));
     g.scrollOffset = std::clamp(g.scrollOffset, 0, g.maxScroll);
 
-    int startX = g.previewInner.left + Scale(2);
-    int startY = g.previewInner.top + Scale(2) - g.scrollOffset;
+    int startX = g.previewInner.left + metrics.cardInset;
+    int startY = g.previewInner.top + metrics.cardInset - g.scrollOffset;
     for (size_t i = 0; i < g.windows.size(); ++i) {
         int row = static_cast<int>(i) / columns;
         int column = static_cast<int>(i) % columns;
@@ -784,28 +815,32 @@ void Layout() {
 }
 
 void ResizeForContent() {
-    if (IsZoomed(g.hwnd)) return;
+    if (!g.hwnd || IsZoomed(g.hwnd) || IsIconic(g.hwnd) || g.resizingForContent) return;
     RECT window{};
+    RECT client{};
     GetWindowRect(g.hwnd, &window);
+    GetClientRect(g.hwnd, &client);
     int width = RectWidth(window);
-    int margin = Scale(12);
-    int cardWidth = Scale(194);
-    int cardGap = Scale(8);
-    int innerWidth = std::max(cardWidth, width - margin * 2 - Scale(14) - Scale(14));
-    int columns = std::max(1, (innerWidth + cardGap) / (cardWidth + cardGap));
-    int rows = g.windows.empty() ? 1 :
-        (static_cast<int>(g.windows.size()) + columns - 1) / columns;
-    int desired = Scale(145 + rows * 154);
-    desired = std::max(Scale(310), desired);
+    GridLayoutMetrics metrics;
+    // Use the same client width and individually scaled dimensions as Layout.
+    // Measuring the outer width or scaling the summed row height can choose a
+    // different column count and leave a clipped row despite available space.
+    int frameHeight = std::max(0, RectHeight(window) - RectHeight(client));
+    int desired = std::max(Scale(310),
+        metrics.ClientHeight(g.windows.size(), RectWidth(client)) + frameHeight);
+    LONG top = window.top;
 
     HMONITOR monitor = MonitorFromWindow(g.hwnd, MONITOR_DEFAULTTONEAREST);
     MONITORINFO monitorInfo{sizeof(monitorInfo)};
     if (GetMonitorInfoW(monitor, &monitorInfo)) {
         desired = std::min(desired, RectHeight(monitorInfo.rcWork));
+        top = std::clamp(top, monitorInfo.rcWork.top, monitorInfo.rcWork.bottom - desired);
     }
-    if (g.initialLayout || abs(RectHeight(window) - desired) > Scale(2)) {
-        SetWindowPos(g.hwnd, nullptr, 0, 0, width, desired,
-                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    if (g.initialLayout || RectHeight(window) != desired || top != window.top) {
+        g.resizingForContent = true;
+        SetWindowPos(g.hwnd, nullptr, window.left, top, width, desired,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+        g.resizingForContent = false;
     }
     g.initialLayout = false;
 }
@@ -867,8 +902,11 @@ void RefreshWindows(bool force) {
         item.thumbnail = existing->thumbnail;
         existing->thumbnail = nullptr;
         item.appliedThumbnailRect = existing->appliedThumbnailRect;
+        item.appliedThumbnailSourceRect = existing->appliedThumbnailSourceRect;
         item.thumbnailPropertiesValid = existing->thumbnailPropertiesValid;
         item.thumbnailVisible = existing->thumbnailVisible;
+        item.thumbnailSourceIconic = existing->thumbnailSourceIconic;
+        item.thumbnailSourceForeground = existing->thumbnailSourceForeground;
     }
     ReleaseWindows(g.windows);
     g.windows = std::move(refreshed);
@@ -921,12 +959,13 @@ void SetThumbnailVisible(WindowInfo& item, bool visible) {
     }
 }
 
-void UpdateThumbnails() {
+void UpdateThumbnails(bool force = false) {
     if (!IsWindowVisible(g.hwnd) || IsIconic(g.hwnd)) {
         for (WindowInfo& item : g.windows) SetThumbnailVisible(item, false);
         return;
     }
     Layout();
+    HWND foreground = GetForegroundWindow();
     for (WindowInfo& item : g.windows) {
         RECT destination = item.previewRect;
         bool fullyVisible = destination.left >= g.previewInner.left &&
@@ -952,20 +991,31 @@ void UpdateThumbnails() {
         int left = destination.left + (hostWidth - width) / 2;
         int top = destination.top + (hostHeight - height) / 2;
         DWM_THUMBNAIL_PROPERTIES properties{};
-        properties.dwFlags = DWM_TNP_RECTDESTINATION | DWM_TNP_OPACITY |
+        properties.dwFlags = DWM_TNP_RECTDESTINATION | DWM_TNP_RECTSOURCE | DWM_TNP_OPACITY |
                              DWM_TNP_VISIBLE | DWM_TNP_SOURCECLIENTAREAONLY;
         properties.rcDestination = MakeRect(left, top, left + width, top + height);
+        // Pin both ends of the transform. A source can replace or resize its
+        // surface on activation/restore without changing the fitted rectangle.
+        properties.rcSource = MakeRect(0, 0, source.cx, source.cy);
         properties.opacity = 255;
         properties.fVisible = TRUE;
         properties.fSourceClientAreaOnly = FALSE;
-        if (item.thumbnailPropertiesValid && item.thumbnailVisible &&
-            SameRect(item.appliedThumbnailRect, properties.rcDestination)) {
+        bool sourceIconic = IsIconic(item.handle) != FALSE;
+        bool sourceForeground = item.handle == foreground;
+        if (!force && item.thumbnailPropertiesValid && item.thumbnailVisible &&
+            SameRect(item.appliedThumbnailRect, properties.rcDestination) &&
+            SameRect(item.appliedThumbnailSourceRect, properties.rcSource) &&
+            item.thumbnailSourceIconic == sourceIconic &&
+            item.thumbnailSourceForeground == sourceForeground) {
             continue;
         }
         if (SUCCEEDED(DwmUpdateThumbnailProperties(item.thumbnail, &properties))) {
             item.appliedThumbnailRect = properties.rcDestination;
+            item.appliedThumbnailSourceRect = properties.rcSource;
             item.thumbnailPropertiesValid = true;
             item.thumbnailVisible = true;
+            item.thumbnailSourceIconic = sourceIconic;
+            item.thumbnailSourceForeground = sourceForeground;
         }
     }
 }
@@ -1313,6 +1363,7 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         InvalidateRect(hwnd, &g.titleRect, FALSE);
         return 0;
     case WM_SIZE:
+        if (wParam != SIZE_MINIMIZED) ResizeForContent();
         Layout();
         InvalidateRect(hwnd, nullptr, FALSE);
         UpdateThumbnails();
@@ -1326,8 +1377,24 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
                      RectWidth(*suggested), RectHeight(*suggested),
                      SWP_NOZORDER | SWP_NOACTIVATE);
+        ResizeForContent();
         return 0;
     }
+    case WM_EXITSIZEMOVE:
+    case WM_DISPLAYCHANGE:
+        ResizeForContent();
+        Layout();
+        InvalidateRect(hwnd, nullptr, FALSE);
+        UpdateThumbnails();
+        return 0;
+    case WM_SETTINGCHANGE:
+        if (wParam == SPI_SETWORKAREA) {
+            ResizeForContent();
+            Layout();
+            InvalidateRect(hwnd, nullptr, FALSE);
+            UpdateThumbnails();
+        }
+        return 0;
     case WM_ERASEBKGND:
         return 1;
     case WM_PAINT: {
@@ -1453,6 +1520,9 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         ApplyDwmBorder(hwnd);
         InvalidateWindowChrome();
         if (wasCapturing) InvalidateRect(hwnd, &g.bindingRect, FALSE);
+        // Re-submit the bounded transform when DWM changes activation surfaces;
+        // decoration paints still exclude previews and thumbnail handles survive.
+        UpdateThumbnails(true);
         return 0;
     }
     case WM_DWMCOMPOSITIONCHANGED:

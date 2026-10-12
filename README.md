@@ -21,6 +21,12 @@ WindowCue 是 Windows 窗口快捷键工具：在实时预览列表中选择窗�
 
 Microsoft Store 渠道正在准备：中文正式身份 MSIX 已可构建，**尚未上架或通过商店认证**；英文独立商店产品仍待补齐官方身份。`packaging/` 保留原有 MSIX 流程。Store 未签名包和本地测试包是提交、开发产物，不能作为普通用户安装包使用。
 
+## 2026-10-12：1.0.1.0 修复
+
+预览列表按实际客户区宽度计算列数和所需高度，在达到屏幕工作区允许的最大高度前展示完整卡片；达到上限后才滚动。DWM 预览在源窗口尺寸变化及 WindowCue 失去焦点时重新提交缩略图属性，修复前台切换后的预览边界更新。
+
+中文、英文原生编译及桌面 UI 回归均通过，覆盖模拟 DPI、列表高度与命中、真实 DWM 源窗口缩放和快捷键前台切换。用户截图中的 ChatGPT 像素溢出尚未用真实应用复现；本次验证范围见 [原生文档](WindowCue.Native/README.md)。已构建中文正式身份的 `1.0.1.0` MSIX，详情见 [打包验证记录](packaging/VALIDATION.md)。本次只更新源码和 Store 构建产物，没有发布新的 GitHub 便携版 Release。
+
 ## 使用
 
 1. 启动中文或英文版本，在预览列表中选择目标窗口。
@@ -49,7 +55,7 @@ Microsoft Store 渠道正在准备：中文正式身份 MSIX 已可构建，**�
 & .\packaging\Build-Msix.ps1 -Language CN -Mode Store -RunSelfTests
 ```
 
-原生 EXE 输出到 `dist\WindowCue.Native\`；便携 ZIP、校验值和构建报告输出到 `dist\release\<运行标识>\`；MSIX 输出到 `packaging\output\`。当前版本为 `1.0.0.0`，便携构建和 MSIX 构建共用 `packaging/partner-center.json` 的版本配置。MSIX 打包说明、身份配置、隔离测试及认证边界见 [packaging/README.md](packaging/README.md)。原生实现及回归程序构建见 [WindowCue.Native/README.md](WindowCue.Native/README.md)。
+原生 EXE 输出到 `dist\WindowCue.Native\`；便携 ZIP、校验值和构建报告输出到 `dist\release\<运行标识>\`；MSIX 输出到 `packaging\output\`。当前源码及打包版本为 `1.0.1.0`，便携构建和 MSIX 构建共用 `packaging/partner-center.json` 的版本配置；已有 GitHub Release 为 `1.0.0.0`。MSIX 打包说明、身份配置、隔离测试及认证边界见 [packaging/README.md](packaging/README.md)。原生实现及回归程序构建见 [WindowCue.Native/README.md](WindowCue.Native/README.md)。
 
 ## 仓库与反馈
 

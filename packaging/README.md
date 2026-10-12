@@ -2,7 +2,19 @@
 
 此目录为 `WindowCue.Native` 增加独立的命令行 MSIX 构建、检查与本地测试流程。中文和英文分别生成一个只含对应语言 EXE 的包，不合并为双语言程序或双入口包。现有业务源码、`WindowCue.Native/build.ps1`、旧 .NET 分支及 `dist/` 独立 EXE 发布方式保持不变。
 
-## 当前成果与证据边界
+## 2026-10-12：1.0.1.0 中文 Store 包
+
+已为预览列表高度及 DWM 前台切换修复构建中文正式身份包：`output/s1ksec.WindowCue_1.0.1.0_x64_CN_Store.msix`，大小 `349811` 字节，SHA256 为 `8C2E4278CC7728A71287AC0AE73B8F8C004361049ADA49B0B7417795F13CE852`。
+
+```powershell
+& .\packaging\Build-Msix.ps1 -Language CN -Mode Store -RunSelfTests
+```
+
+正式 PFN 匹配；绑定/SVG 自测均返回 `0`；MakeAppx 完整验证通过（未使用 `/nv`）；解包 EXE 哈希一致，运行依赖仅为系统 DLL。包保留未签名状态，报告为同路径加 `.report.json`，日志目录为 `artifacts/Store-CN-20261012-130125-72d8182d/`。中文、英文桌面 UI 回归均返回 `0`，具体覆盖和真实应用复现边界见 [VALIDATION.md](VALIDATION.md)。
+
+本次未安装 MSIX、未执行 WACK、未上传或提交商店；EN 正式身份仍未提供。没有发布新的 GitHub 便携版 Release，昨日产物和签名记录保留。
+
+## 2026-10-11：1.0.0.0 首批构建记录
 
 2026-10-11 已在当前 Windows 环境实际编译、打包并解包检查：
 

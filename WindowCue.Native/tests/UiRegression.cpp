@@ -1,8 +1,27 @@
 // Keep regression-only entry points out of the release EXEs. Including the
 // production TU lets these checks exercise the actual message handlers.
+#include "../src/WindowCueNative.h"
+
+namespace {
+struct ThumbnailSubmission {
+    HTHUMBNAIL thumbnail;
+    DWM_THUMBNAIL_PROPERTIES properties;
+};
+std::vector<ThumbnailSubmission> submissions;
+
+HRESULT WINAPI RecordThumbnailProperties(
+    HTHUMBNAIL thumbnail, const DWM_THUMBNAIL_PROPERTIES* properties) {
+    HRESULT result = DwmUpdateThumbnailProperties(thumbnail, properties);
+    if (SUCCEEDED(result)) submissions.push_back({thumbnail, *properties});
+    return result;
+}
+}
+
+#define DwmUpdateThumbnailProperties RecordThumbnailProperties
 #define wWinMain WindowCueProductionEntry
 #include "../src/Main.cpp"
 #undef wWinMain
+#undef DwmUpdateThumbnailProperties
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     using namespace windowcue;
@@ -20,7 +39,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         WS_POPUP | WS_CAPTION, -32000, -32000, 1080, 610,
         nullptr, nullptr, instance, nullptr);
     HWND source = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"Preview source",
-        WS_OVERLAPPEDWINDOW, -32000, -32000, 640, 480,
+        WS_POPUP, -32000, -32000, 640, 480,
         nullptr, nullptr, instance, nullptr);
     if (!host || !source) return 92;
     HWND originalForeground = GetForegroundWindow();
@@ -81,6 +100,66 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     UnregisterAllBindings();
     g.bindings.clear();
 
+    // Exercise the actual client layout at common DPI scales, including the
+    // exact width at which another column fits. A scroll bar is allowed only
+    // when the normal window has reached the monitor's work-area height.
+    UINT actualDpi = g.dpi;
+    for (UINT dpi : {96u, 120u, 144u, 192u}) {
+        g.dpi = dpi;
+        GridLayoutMetrics metrics;
+        int fiveColumnWidth = metrics.margin * 2 + metrics.previewInset * 2 +
+            metrics.scrollbarSpace + metrics.cardWidth * 5 + metrics.cardGap * 4;
+        check(metrics.Columns(fiveColumnWidth) == 5 &&
+              metrics.Columns(fiveColumnWidth - 1) == 4, 50);
+        for (int width : {Scale(1080), fiveColumnWidth - 1, fiveColumnWidth}) {
+            for (size_t count : {size_t{0}, size_t{1}, size_t{10}, size_t{11},
+                                 size_t{15}, size_t{16}, size_t{60}}) {
+                g.windows.clear();
+                g.windows.resize(count);
+                g.scrollOffset = 100000;
+                SetWindowPos(host, nullptr, -32000, -32000, width, Scale(310),
+                             SWP_NOZORDER | SWP_NOACTIVATE);
+                ResizeForContent();
+                Layout();
+                RECT bounds{};
+                GetWindowRect(host, &bounds);
+                MONITORINFO monitor{sizeof(monitor)};
+                check(GetMonitorInfoW(MonitorFromWindow(host, MONITOR_DEFAULTTONEAREST),
+                                      &monitor) != FALSE, 51);
+                check(bounds.top >= monitor.rcWork.top &&
+                      bounds.bottom <= monitor.rcWork.bottom, 52);
+                if (g.maxScroll) {
+                    check(RectHeight(bounds) == RectHeight(monitor.rcWork), 53);
+                    check(g.scrollOffset == g.maxScroll &&
+                          g.windows.back().cardRect.bottom <= g.previewInner.bottom, 54);
+                } else {
+                    check(g.scrollOffset == 0, 55);
+                    for (size_t i = 0; i < count; ++i) {
+                        const RECT& card = g.windows[i].cardRect;
+                        check(card.top >= g.previewInner.top &&
+                              card.bottom <= g.previewInner.bottom &&
+                              HitCard({card.left + 10, card.bottom - 1}) ==
+                                  static_cast<int>(i), 56);
+                    }
+                }
+            }
+        }
+    }
+    g.dpi = actualDpi;
+    g.windows.resize(11);
+    // Restore must repair a short viewport even if the window list is unchanged.
+    g.resizingForContent = true;
+    SetWindowPos(host, nullptr, -32000, -32000, Scale(1080), Scale(310),
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+    g.resizingForContent = false;
+    SendMessageW(host, WM_SIZE, SIZE_RESTORED, 0);
+    check(g.maxScroll == 0 &&
+          g.windows.back().cardRect.bottom <= g.previewInner.bottom, 57);
+    g.windows.clear();
+    g.scrollOffset = 0;
+    SetWindowPos(host, nullptr, -32000, -32000, 1080, 610,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+
     PrependWindowCueItem(g.windows);
     WindowInfo preview;
     preview.handle = source;
@@ -97,6 +176,50 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     UpdateWindow(host);
     UpdateThumbnails();
     check(g.windows[1].thumbnailVisible, 29);
+    auto submittedTransform = [&]() -> const DWM_THUMBNAIL_PROPERTIES* {
+        for (auto entry = submissions.rbegin(); entry != submissions.rend(); ++entry) {
+            if (entry->thumbnail == thumbnail &&
+                (entry->properties.dwFlags & DWM_TNP_RECTDESTINATION)) {
+                return &entry->properties;
+            }
+        }
+        return nullptr;
+    };
+    auto boundedTransform = [&]() {
+        const auto* properties = submittedTransform();
+        if (!properties || !(properties->dwFlags & DWM_TNP_RECTSOURCE)) return false;
+        const RECT& target = properties->rcDestination;
+        const RECT& card = g.windows[1].previewRect;
+        SIZE sourceSize{};
+        return SUCCEEDED(DwmQueryThumbnailSourceSize(thumbnail, &sourceSize)) &&
+            SameRect(properties->rcSource, MakeRect(0, 0, sourceSize.cx, sourceSize.cy)) &&
+            target.left >= card.left && target.top >= card.top &&
+            target.right <= card.right && target.bottom <= card.bottom;
+    };
+    check(boundedTransform(), 36);
+    size_t unchangedCount = submissions.size();
+    UpdateThumbnails();
+    check(submissions.size() == unchangedCount, 37);
+    UpdateThumbnails(true);
+    check(submissions.size() > unchangedCount && boundedTransform(), 38);
+
+    // Equal-aspect source resizes leave the fitted target unchanged. They must
+    // still submit a new source rectangle instead of reusing a stale transform.
+    RECT initialDestination = g.windows[1].appliedThumbnailRect;
+    size_t beforeResize = submissions.size();
+    SetWindowPos(source, nullptr, 0, 0, 1280, 960,
+                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    DwmFlush();
+    UpdateThumbnails();
+    check(submissions.size() > beforeResize && boundedTransform() &&
+          SameRect(initialDestination, g.windows[1].appliedThumbnailRect), 39);
+    for (SIZE sourceSize : {SIZE{1400, 240}, SIZE{240, 1400}, SIZE{640, 480}}) {
+        SetWindowPos(source, nullptr, 0, 0, sourceSize.cx, sourceSize.cy,
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        DwmFlush();
+        UpdateThumbnails();
+        check(boundedTransform() && g.windows[1].thumbnail == thumbnail, 40);
+    }
     HRGN update = CreateRectRgn(0, 0, 0, 0);
     auto previewsUntouched = [&]() {
         GetUpdateRgn(host, update, FALSE);
@@ -106,8 +229,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     for (bool dark : {true, false}) {
         g.darkMode = dark;
         ValidateRect(host, nullptr);
+        size_t beforeDeactivation = submissions.size();
         SendMessageW(host, WM_ACTIVATE, WA_INACTIVE, reinterpret_cast<LPARAM>(source));
         check(!g.windowActive && previewsUntouched(), 22);
+        check(submissions.size() > beforeDeactivation && boundedTransform(), 41);
         check(PtInRegion(update, g.titleRect.left + 50, g.titleRect.top + 10), 30);
         ValidateRect(host, nullptr);
         SendMessageW(host, WM_ACTIVATE, WA_ACTIVE, reinterpret_cast<LPARAM>(source));
@@ -144,8 +269,25 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     check(GetForegroundWindow() == host, 32);
     ValidateRect(host, nullptr);
     SendMessageW(host, WM_HOTKEY, targetBinding.hotkeyId, 0);
+    UpdateThumbnails();
     check(GetForegroundWindow() == source && previewsUntouched(), 33);
     check(g.windows[1].thumbnail == thumbnail && g.windows[1].thumbnailVisible, 34);
+    check(g.windows[1].thumbnailSourceForeground && boundedTransform(), 42);
+    ShowWindow(source, SW_MINIMIZE);
+    DwmFlush();
+    UpdateThumbnails();
+    check(g.windows[1].thumbnailSourceIconic && boundedTransform(), 43);
+    ActivateWindow(source);
+    // ActivateWindow uses ShowWindowAsync; the normal application message loop
+    // dispatches the restore before its next thumbnail timer tick.
+    MSG pending{};
+    while (PeekMessageW(&pending, nullptr, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&pending);
+        DispatchMessageW(&pending);
+    }
+    DwmFlush();
+    UpdateThumbnails();
+    check(!g.windows[1].thumbnailSourceIconic && boundedTransform(), 44);
     ActivateWindow(host);
     check(GetForegroundWindow() == host && g.windows[1].thumbnail == thumbnail, 35);
     DeleteObject(update);

@@ -1,5 +1,32 @@
 # WindowCue MSIX 实际验证记录
 
+## 2026-10-12：1.0.1.0 修复后验证
+
+已完成中文、英文原生 Release 与 UI 回归编译，并构建中文正式身份 MSIX。本次只更新源码及构建 Store 包，没有发布新的 GitHub Release，也未上传或提交商店。
+
+| 检查 | 结果 |
+| --- | --- |
+| 原生构建 | `WindowCue.Native/build.ps1 -BuildRegressionTests` 编译通过 |
+| 桌面 UI 回归 | `CN=0`、`EN=0`；使用独立配置目录 |
+| 布局覆盖 | 100%、125%、150%、200% 模拟 DPI；列数临界、列表增减、高度封顶、末行命中、`WM_SIZE` 恢复 |
+| DWM 覆盖 | 实建源窗口同比例缩放、极端宽高变化、失焦后属性强制重新提交、真实快捷键前台切换及最小化恢复 |
+| 中文 MSIX | Release/x64、`1.0.1.0`、未签名正式 Store 身份 |
+| 原生包内自测 | `--binding-self-test` = 0；`--svg-self-test` = 0 |
+| 包验证 | MakeAppx 完整验证通过（未使用 `/nv`）；PFN 匹配；解包 EXE 哈希一致；仅导入系统 DLL |
+| 安装及认证 | 未安装本次 MSIX；未执行 WACK；未进行商店认证 |
+
+产物：`output/s1ksec.WindowCue_1.0.1.0_x64_CN_Store.msix`，大小 `349811` 字节。
+
+SHA256：`8C2E4278CC7728A71287AC0AE73B8F8C004361049ADA49B0B7417795F13CE852`。
+
+报告：`output/s1ksec.WindowCue_1.0.1.0_x64_CN_Store.msix.report.json`；编译、打包及解包日志：`artifacts/Store-CN-20261012-130125-72d8182d/`。PFN 为 `s1ksec.WindowCue_14ska59yrcwza`，沿用现有中文 Partner Center 身份。英文正式身份仍未提供，本次没有构建 EN Store 包。
+
+回归验证了布局及 DWM 属性更新路径，未使用用户截图中的真实 ChatGPT 应用复现像素溢出；模拟 DPI 也不等于真实多显示器 DPI 切换。原生回归及 MakeAppx 验证不代表已安装 MSIX 的兼容性或 WACK 通过。
+
+当前目录已有 Git 仓库，远端为 `https://github.com/s1kSec/windowcue.git`，本次已通过实时 `git ls-remote` 确认远端可访问。源码推送与 GitHub Release 发布是独立操作，本次没有创建新 Release。
+
+## 2026-10-11：1.0.0.0 历史记录
+
 验证日期：2026-10-11，Asia/Shanghai。已完成命令行打包准备并生成实际文件；未上传或发布商店，未安装到当前用户，未执行 WACK。
 
 ## 最终产物
@@ -76,7 +103,7 @@ MakeAppx 解包计算出的 PFN 与上述 Partner Center PFN 完全相同。英�
 - 配置持久化：`Platform.cpp:538-610` 处理绑定、主题和自身快捷键初始化文件。MSIX AppData 虚拟化、独立版旧配置读取、升级/卸载后的物理文件行为不能仅凭逻辑路径证明，需在测试账户验证。
 - 多实例与更新：没有单实例互斥体或专门 Store 更新恢复逻辑，WM_CLOSE 隐藏到托盘；重复启动、更新关闭和重新激活需动态复测。
 
-此次没有运行已安装包、WACK 或 UI/DWM 回归测试程序。原生自测与完整包结构验证不等于已安装 MSIX 兼容性认证。隔离测试账户是为了避免 `LoadBindings()` 筛选失效 HWND 后保存配置改动现有绑定；这不是已证实的 MSIX 缺陷。
+2026-10-11 没有运行已安装包、WACK 或 UI/DWM 回归测试程序。原生自测与完整包结构验证不等于已安装 MSIX 兼容性认证。隔离测试账户是为了避免 `LoadBindings()` 筛选失效 HWND 后保存配置改动现有绑定；这不是已证实的 MSIX 缺陷。
 
 ## 剩余事项与下一步
 
@@ -84,4 +111,4 @@ MakeAppx 解包计算出的 PFN 与上述 Partner Center PFN 完全相同。英�
 2. 若继续英文独立商店发布，在 Partner Center 新建英文产品，取得真实 IdentityName、预留 DisplayName、PFN、StoreId，核对发布者字段后填写 EN 配置，执行 `Build-Msix.ps1 -Language EN -Mode Store -RunSelfTests`。
 3. 中文产品新建 submission，上传表中未签名 CN Store 包，补全市场/定价、分类与年龄分级、中文描述、真实截图、支持信息和适用的隐私政策，说明 runFullTrust 的窗口枚举/快捷键/托盘用途，然后提交认证。微软在发布时提供正式签名。
 
-完整命令、精确工具安装步骤及审核说明见 [README.md](README.md)。新增内容全部在 `packaging/`；原 `WindowCue.Native/build.ps1`、CMake、C# 分支、业务源码和 `dist/` 保留。当前目录没有 Git 元数据，无法验证线上 GitHub 流水线，现有本地独立 EXE 发布方式未被替换。
+完整命令、精确工具安装步骤及审核说明见 [README.md](README.md)。2026-10-11 的打包新增内容位于 `packaging/`，现有独立 EXE 发布方式未被替换；当前 Git 仓库状态见上方 2026-10-12 记录。

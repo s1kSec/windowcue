@@ -34,8 +34,11 @@ struct WindowInfo {
     HICON icon{};          // Owned by the WindowInfo list.
     HTHUMBNAIL thumbnail{};
     RECT appliedThumbnailRect{};
+    RECT appliedThumbnailSourceRect{};
     bool thumbnailPropertiesValid{};
     bool thumbnailVisible{};
+    bool thumbnailSourceIconic{};
+    bool thumbnailSourceForeground{};
     RECT cardRect{};
     RECT previewRect{};
     bool bound{};
