@@ -28,4 +28,5 @@ if(MSVC)
 endif()
 
 target_link_libraries(WindowCueNative PRIVATE
-    user32 gdi32 shell32 shlwapi ole32 dwmapi d2d1 d3d11 dxgi msimg32 uxtheme)
+    user32 gdi32 shell32 shlwapi ole32 dwmapi d2d1 d3d11 dxgi msimg32 uxtheme
+    advapi32 runtimeobject windowsapp)

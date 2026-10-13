@@ -60,5 +60,6 @@ bindings.json
 binding.json
 appearance.txt
 self-hotkey-initialized.txt
+startup-preference.txt
 Thumbs.db
 .DS_Store

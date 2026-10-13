@@ -122,7 +122,8 @@ try {
     $compileArgs += @('/link', '/MACHINE:X64', '/INCREMENTAL:NO', '/SUBSYSTEM:WINDOWS,6.02', '/DYNAMICBASE', '/NXCOMPAT')
     $compileArgs += @($tools.LibraryPaths | ForEach-Object { "/LIBPATH:$_" })
     $compileArgs += @('user32.lib', 'gdi32.lib', 'shell32.lib', 'shlwapi.lib', 'ole32.lib', 'dwmapi.lib',
-        'd2d1.lib', 'd3d11.lib', 'dxgi.lib', 'msimg32.lib', 'uxtheme.lib')
+        'd2d1.lib', 'd3d11.lib', 'dxgi.lib', 'msimg32.lib', 'uxtheme.lib',
+        'advapi32.lib', 'runtimeobject.lib', 'windowsapp.lib')
     # cl invokes link; supply only its tool directory temporarily and restore PATH.
     $previousPath = $env:PATH
     try {
@@ -140,7 +141,22 @@ $imports = @($dumpOutput | ForEach-Object {
 } | Sort-Object -Unique)
 $allowedSystemDlls = @('KERNEL32.dll', 'USER32.dll', 'GDI32.dll', 'SHELL32.dll', 'SHLWAPI.dll', 'ole32.dll',
     'DWMAPI.dll', 'd2d1.dll', 'd3d11.dll', 'dxgi.dll', 'MSIMG32.dll', 'UxTheme.dll', 'ADVAPI32.dll',
-    'OLEAUT32.dll', 'COMDLG32.dll', 'COMCTL32.dll')
+    'OLEAUT32.dll', 'COMDLG32.dll', 'COMCTL32.dll', 'COMBASE.dll',
+    'api-ms-win-core-winrt-l1-1-0.dll', 'api-ms-win-core-winrt-error-l1-1-0.dll',
+    'api-ms-win-core-winrt-string-l1-1-0.dll',
+    # windowsapp.lib imports Windows API-set contracts supplied by the OS.
+    # Keep the observed contract names explicit; never permit arbitrary DLLs.
+    'api-ms-win-core-processenvironment-l1-1-0.dll', 'api-ms-win-core-file-l1-1-0.dll',
+    'api-ms-win-core-handle-l1-1-0.dll', 'api-ms-win-core-errorhandling-l1-1-0.dll',
+    'api-ms-win-core-synch-l1-1-0.dll', 'api-ms-win-core-processthreads-l1-1-0.dll',
+    'api-ms-win-core-libraryloader-l1-2-0.dll', 'api-ms-win-core-heap-l2-1-0.dll',
+    'api-ms-win-core-largeinteger-l1-1-0.dll', 'api-ms-win-core-synch-l1-2-0.dll',
+    'api-ms-win-core-processthreads-l1-1-1.dll', 'api-ms-win-core-psapi-l1-1-0.dll',
+    'api-ms-win-core-string-l1-1-0.dll', 'api-ms-win-appmodel-runtime-l1-1-0.dll',
+    'api-ms-win-core-libraryloader-l1-2-1.dll', 'api-ms-win-core-rtlsupport-l1-1-0.dll',
+    'api-ms-win-core-interlocked-l1-1-0.dll', 'api-ms-win-core-heap-l1-1-0.dll',
+    'api-ms-win-core-console-l1-1-0.dll', 'api-ms-win-core-fibers-l1-1-0.dll',
+    'api-ms-win-core-localization-l1-2-0.dll')
 if ($imports.Count -eq 0) { throw 'No PE imports detected; dependency inspection cannot be trusted.' }
 foreach ($dll in $imports) {
     if ($dll -notin $allowedSystemDlls) {
@@ -156,7 +172,7 @@ if ($RunSelfTests) {
     try {
         $env:WINDOWCUE_SETTINGS_DIR = Join-Path $runRoot 'test-settings'
         New-Item -ItemType Directory -Force -Path $env:WINDOWCUE_SETTINGS_DIR | Out-Null
-        foreach ($test in @('--binding-self-test', '--svg-self-test')) {
+        foreach ($test in @('--binding-self-test', '--svg-self-test', '--startup-self-test')) {
             $process = Start-Process -FilePath $exe -ArgumentList $test -WindowStyle Hidden -Wait -PassThru
             $selfTests += [pscustomobject]@{ Test = $test; ExitCode = $process.ExitCode }
             if ($process.ExitCode -ne 0) { throw "$test failed: $($process.ExitCode)" }
@@ -179,6 +195,25 @@ foreach ($key in $values.Keys) { $manifestText = $manifestText.Replace($key, [Se
 if ($manifestText -match '__[A-Z_]+__') { throw 'Unresolved manifest placeholder.' }
 $manifestPath = Join-Path $stageRoot 'AppxManifest.xml'
 [IO.File]::WriteAllText($manifestPath, $manifestText, [Text.UTF8Encoding]::new($false))
+
+function Assert-WindowCueStartupManifest {
+    param([Parameter(Mandatory = $true)][xml]$Manifest)
+    $namespaces = [Xml.XmlNamespaceManager]::new($Manifest.NameTable)
+    $namespaces.AddNamespace('foundation', 'http://schemas.microsoft.com/appx/manifest/foundation/windows10')
+    $namespaces.AddNamespace('desktop', 'http://schemas.microsoft.com/appx/manifest/desktop/windows10')
+    $extensions = @($Manifest.SelectNodes('/foundation:Package/foundation:Applications/foundation:Application/foundation:Extensions/desktop:Extension[@Category="windows.startupTask"]', $namespaces))
+    if ($extensions.Count -ne 1 -or $extensions[0].Executable -cne 'app\WindowCue.exe' -or
+        $extensions[0].EntryPoint -cne 'Windows.FullTrustApplication') {
+        throw 'Manifest requires exactly one full-trust WindowCue startup extension.'
+    }
+    $tasks = @($extensions[0].SelectNodes('desktop:StartupTask', $namespaces))
+    if ($tasks.Count -ne 1 -or $tasks[0].TaskId -cne 'WindowCueStartup' -or
+        $tasks[0].Enabled -cne 'true' -or [string]::IsNullOrWhiteSpace($tasks[0].DisplayName)) {
+        throw 'Manifest startup task must match the backend task ID and be enabled by default.'
+    }
+}
+[xml]$stagedManifest = $manifestText
+Assert-WindowCueStartupManifest -Manifest $stagedManifest
 
 # Index scale/targetsize assets, without modifying the source icons.
 $priConfig = Join-Path $runRoot 'priconfig.xml'
@@ -208,12 +243,14 @@ if ($unpackedManifest.Package.Identity.Name -cne $identity.IdentityName -or
     $unpackedManifest.Package.Identity.Publisher -cne $identity.Publisher -or
     $unpackedManifest.Package.Identity.Version -ne $Version -or
     $unpackedManifest.Package.Identity.ProcessorArchitecture -ne 'x64') { throw 'Unpacked manifest identity/architecture/version mismatch.' }
+Assert-WindowCueStartupManifest -Manifest $unpackedManifest
 $report = [ordered]@{
     BuiltAt = (Get-Date).ToString('o'); Mode = $Mode; Language = $Language; Stack = 'C++17/Win32'; Configuration = 'Release'; Architecture = 'x64'
     IdentityName = $identity.IdentityName; Publisher = $identity.Publisher; PublisherDisplayName = $identity.PublisherDisplayName
     DisplayName = $identity.DisplayName; PackageFamilyName = $packageFamilyName; StoreId = $identity.StoreId; Version = $Version
     Tools = $tools; ImportedSystemDlls = $imports; ExternalRuntimeDependencies = @(); SelfTests = $selfTests
     MakeAppxValidation = 'Passed (no /nv)'; UnpackedExeHashMatch = $true; Signature = 'Unsigned; Store re-signs, local installation needs a test signature'
+    StartupManifestValidation = 'Passed (staged and unpacked)'; StartupTaskId = 'WindowCueStartup'; StartupEnabledByDefault = $true
     InstalledMsixRuntimeTests = 'Not run'; Wack = 'Not run'; ArtifactsDirectory = $runRoot
     PackagePath = $packagePath; PackageBytes = (Get-Item -LiteralPath $packagePath).Length; SHA256 = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash
 }

@@ -2,10 +2,17 @@
 
 #include <shlobj.h>
 #include <shlwapi.h>
+#include <appmodel.h>
+#include <winrt/Windows.ApplicationModel.h>
+#include <winrt/Windows.Foundation.h>
 
 #include <algorithm>
 #include <cwctype>
 #include <sstream>
+#include <future>
+
+#pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "windowsapp.lib")
 
 namespace windowcue {
 namespace {
@@ -608,6 +615,322 @@ bool MarkSelfHotkeyInitialized() {
     if (directory.empty()) return false;
     CreateDirectoryW(directory.c_str(), nullptr);
     return WriteUtf8File(directory + L"\\self-hotkey-initialized.txt", L"initialized\n");
+}
+
+namespace {
+
+constexpr wchar_t kStartupValue[] = L"WindowCue";
+constexpr wchar_t kStartupRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+constexpr wchar_t kStartupApprovedKey[] =
+    L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
+
+std::wstring StartupText(const wchar_t* chinese, const wchar_t* english) {
+#ifdef LANG_EN
+    (void)chinese;
+    return english;
+#else
+    (void)english;
+    return chinese;
+#endif
+}
+
+struct RegistryKey {
+    HKEY handle{};
+    ~RegistryKey() { if (handle) RegCloseKey(handle); }
+};
+
+// An overridden settings directory is always isolated from real logon entries,
+// including when the executable is run inside a package during testing.
+bool StartupIsIsolated() {
+    return GetEnvironmentVariableW(L"WINDOWCUE_SETTINGS_DIR", nullptr, 0) > 1;
+}
+
+std::wstring StartupTestRoot() {
+    std::uint64_t hash = 14695981039346656037ull;
+    for (wchar_t ch : SettingsDirectory()) {
+        hash ^= static_cast<std::uint64_t>(towlower(ch));
+        hash *= 1099511628211ull;
+    }
+    wchar_t suffix[24]{};
+    swprintf_s(suffix, L"%016llx", static_cast<unsigned long long>(hash));
+    return std::wstring(L"Software\\WindowCue\\StartupTests\\") + suffix;
+}
+
+std::wstring StartupRunKey() {
+    return StartupIsIsolated() ? StartupTestRoot() + L"\\Run" : kStartupRunKey;
+}
+
+std::wstring StartupApprovedKey() {
+    return StartupIsIsolated() ? StartupTestRoot() + L"\\Approved" : kStartupApprovedKey;
+}
+
+bool StartupHasPackageIdentity() {
+    if (StartupIsIsolated()) return false;
+    UINT32 length = 0;
+    return GetCurrentPackageFullName(&length, nullptr) == ERROR_INSUFFICIENT_BUFFER;
+}
+
+StartupStatus StartupError() {
+    return {StartupState::Unavailable, StartupText(
+        L"无法读取或保存自启动设置，请检查当前用户权限。",
+        L"Startup settings could not be read or saved. Check current user permissions.")};
+}
+
+StartupStatus MapStartupTaskState(winrt::Windows::ApplicationModel::StartupTaskState state) {
+    using TaskState = winrt::Windows::ApplicationModel::StartupTaskState;
+    switch (state) {
+    case TaskState::Enabled:
+    case TaskState::EnabledByPolicy:
+        return {StartupState::Enabled, {}};
+    case TaskState::Disabled:
+        return {StartupState::Disabled, {}};
+    case TaskState::DisabledByUser:
+        return {StartupState::DisabledByUser, StartupText(
+            L"已在 Windows 中禁用。点击开关，前往系统启动设置重新启用。",
+            L"Disabled in Windows. Click the switch to re-enable in Windows startup settings.")};
+    case TaskState::DisabledByPolicy:
+        return {StartupState::DisabledByPolicy, StartupText(
+            L"系统策略已禁用自启动。", L"Startup is disabled by system policy.")};
+    default:
+        return StartupError();
+    }
+}
+
+StartupStatus PackagedStartupStatus(bool change, bool enabled) {
+    // The Win32 UI uses an STA. Blocking WinRT async .get() there is invalid;
+    // perform the package operation on a short-lived MTA worker instead.
+    try {
+        return std::async(std::launch::async, [change, enabled] {
+            winrt::init_apartment(winrt::apartment_type::multi_threaded);
+            StartupStatus result;
+            try {
+                auto task = winrt::Windows::ApplicationModel::StartupTask::GetAsync(
+                    L"WindowCueStartup").get();
+                auto state = task.State();
+                using TaskState = winrt::Windows::ApplicationModel::StartupTaskState;
+                if (change && enabled && state == TaskState::Disabled) {
+                    state = task.RequestEnableAsync().get();
+                } else if (change && !enabled) {
+                    if (state == TaskState::EnabledByPolicy) {
+                        result = {StartupState::Unavailable, StartupText(
+                            L"系统策略要求自启动，无法在应用中关闭。",
+                            L"System policy requires startup; it cannot be disabled in the app.")};
+                    } else {
+                        task.Disable();
+                        state = task.State();
+                    }
+                }
+                if (result.detail.empty()) result = MapStartupTaskState(state);
+            } catch (const winrt::hresult_error&) {
+                result = StartupError();
+            }
+            winrt::uninit_apartment();
+            return result;
+        }).get();
+    } catch (...) {
+        return StartupError();
+    }
+}
+
+LONG ReadStartupCommand(std::wstring& command) {
+    RegistryKey key;
+    LONG status = RegOpenKeyExW(HKEY_CURRENT_USER, StartupRunKey().c_str(), 0,
+                               KEY_QUERY_VALUE, &key.handle);
+    if (status != ERROR_SUCCESS) return status;
+    DWORD type = 0, bytes = 0;
+    status = RegQueryValueExW(key.handle, kStartupValue, nullptr, &type, nullptr, &bytes);
+    if (status != ERROR_SUCCESS) return status;
+    if (type != REG_SZ || bytes < sizeof(wchar_t) || bytes > 65536 || bytes % sizeof(wchar_t))
+        return ERROR_INVALID_DATA;
+    std::vector<wchar_t> buffer(bytes / sizeof(wchar_t) + 1, L'\0');
+    status = RegQueryValueExW(key.handle, kStartupValue, nullptr, &type,
+                            reinterpret_cast<BYTE*>(buffer.data()), &bytes);
+    if (status == ERROR_SUCCESS) command.assign(buffer.data());
+    return status;
+}
+
+LONG StartupApproval(bool& disabled) {
+    disabled = false;
+    RegistryKey key;
+    LONG status = RegOpenKeyExW(HKEY_CURRENT_USER, StartupApprovedKey().c_str(), 0,
+                               KEY_QUERY_VALUE, &key.handle);
+    if (status == ERROR_FILE_NOT_FOUND) return ERROR_SUCCESS;
+    if (status != ERROR_SUCCESS) return status;
+    BYTE bytes[32]{};
+    DWORD type = 0, size = sizeof(bytes);
+    status = RegQueryValueExW(key.handle, kStartupValue, nullptr, &type, bytes, &size);
+    if (status == ERROR_FILE_NOT_FOUND) return ERROR_SUCCESS;
+    if (status != ERROR_SUCCESS) return status;
+    // Windows' observed StartupApproved format: 3/7 disabled, 2/6 enabled.
+    // Read only; never change this OS-owned value to bypass a user's choice.
+    if (type != REG_BINARY || size < 12 || bytes[1] || bytes[2] || bytes[3] ||
+        (bytes[0] != 2 && bytes[0] != 3 && bytes[0] != 6 && bytes[0] != 7))
+        return ERROR_INVALID_DATA;
+    disabled = bytes[0] == 3 || bytes[0] == 7;
+    return ERROR_SUCCESS;
+}
+
+std::wstring StartupCommand() {
+    wchar_t path[32768]{};
+    DWORD size = GetModuleFileNameW(nullptr, path, static_cast<DWORD>(std::size(path)));
+    if (!size || size >= std::size(path)) return {};
+    return std::wstring(L"\"") + path + L"\" --startup";
+}
+
+LONG WriteStartupCommand(bool enabled) {
+    RegistryKey key;
+    LONG status;
+    if (enabled) {
+        std::wstring command = StartupCommand();
+        // Windows documents a 260-character limit for Run commands.
+        if (command.empty() || command.size() > 260) return ERROR_FILENAME_EXCED_RANGE;
+        status = RegCreateKeyExW(HKEY_CURRENT_USER, StartupRunKey().c_str(), 0, nullptr,
+                                0, KEY_SET_VALUE, nullptr, &key.handle, nullptr);
+        if (status != ERROR_SUCCESS) return status;
+        return RegSetValueExW(key.handle, kStartupValue, 0, REG_SZ,
+            reinterpret_cast<const BYTE*>(command.c_str()),
+            static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
+    }
+    status = RegOpenKeyExW(HKEY_CURRENT_USER, StartupRunKey().c_str(), 0,
+                           KEY_SET_VALUE, &key.handle);
+    if (status == ERROR_FILE_NOT_FOUND) return ERROR_SUCCESS;
+    if (status != ERROR_SUCCESS) return status;
+    status = RegDeleteValueW(key.handle, kStartupValue);
+    return status == ERROR_FILE_NOT_FOUND ? ERROR_SUCCESS : status;
+}
+
+bool SaveStartupPreference(bool enabled) {
+    std::wstring directory = SettingsDirectory();
+    if (directory.empty()) return false;
+    CreateDirectoryW(directory.c_str(), nullptr);
+    return WriteUtf8File(directory + L"\\startup-preference.txt",
+                         enabled ? L"enabled\n" : L"disabled\n");
+}
+
+} // namespace
+
+StartupStatus QueryStartupStatus() {
+    if (StartupHasPackageIdentity()) return PackagedStartupStatus(false, false);
+    std::wstring command;
+    LONG status = ReadStartupCommand(command);
+    if (status == ERROR_FILE_NOT_FOUND) return {StartupState::Disabled, {}};
+    if (status != ERROR_SUCCESS) return StartupError();
+    bool disabled = false;
+    if (StartupApproval(disabled) != ERROR_SUCCESS) return StartupError();
+    if (disabled) return {StartupState::DisabledByUser, StartupText(
+        L"已在 Windows 中禁用。点击开关，前往系统启动设置重新启用。",
+        L"Disabled in Windows. Click the switch to re-enable in Windows startup settings.")};
+    return {command.empty() ? StartupState::Disabled : StartupState::Enabled, {}};
+}
+
+StartupStatus SetStartupEnabled(bool enabled) {
+    if (StartupHasPackageIdentity()) return PackagedStartupStatus(true, enabled);
+    bool disabled = false;
+    if (enabled) {
+        if (StartupApproval(disabled) != ERROR_SUCCESS) return StartupError();
+        if (disabled) {
+            // After an in-app disable removed Run, an explicit enable restores
+            // its visibility in Windows Settings without changing OS approval.
+            std::wstring command;
+            if (ReadStartupCommand(command) == ERROR_FILE_NOT_FOUND &&
+                (WriteStartupCommand(true) != ERROR_SUCCESS || !SaveStartupPreference(true)))
+                return StartupError();
+            return {StartupState::DisabledByUser, StartupText(
+                L"请在 Windows 启动设置中重新启用 WindowCue。",
+                L"Re-enable WindowCue in Windows startup settings.")};
+        }
+    }
+    if (WriteStartupCommand(enabled) != ERROR_SUCCESS || !SaveStartupPreference(enabled))
+        return StartupError();
+    return QueryStartupStatus();
+}
+
+void InitializeStartupPreference() {
+    // The manifest supplies the packaged default; Windows owns subsequent state.
+    if (StartupHasPackageIdentity()) return;
+    std::wstring directory = SettingsDirectory();
+    if (directory.empty()) return;
+    std::wstring marker = directory + L"\\startup-preference.txt";
+    StartupStatus status = QueryStartupStatus();
+    if (GetFileAttributesW(marker.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        if (status.state == StartupState::Disabled) {
+            bool disabled = false;
+            if (StartupApproval(disabled) == ERROR_SUCCESS) {
+                if (disabled) SaveStartupPreference(false);
+                else SetStartupEnabled(true);
+            }
+        } else if (status.state == StartupState::Enabled ||
+                   status.state == StartupState::DisabledByUser) {
+            SaveStartupPreference(true);
+        }
+        return;
+    }
+    // Refresh an enabled registration after moving/updating the portable EXE.
+    // Missing or Windows-disabled entries are never silently recreated.
+    if (status.state == StartupState::Enabled) {
+        std::wstring command;
+        if (ReadStartupCommand(command) == ERROR_SUCCESS && command != StartupCommand())
+            WriteStartupCommand(true);
+    }
+}
+
+bool RunStartupSelfTests() {
+    if (!StartupIsIsolated()) return false;
+    std::wstring command;
+    const std::wstring marker = SettingsDirectory() + L"\\startup-preference.txt";
+    if (ReadStartupCommand(command) != ERROR_FILE_NOT_FOUND ||
+        GetFileAttributesW(marker.c_str()) != INVALID_FILE_ATTRIBUTES) return false;
+    bool passed = QueryStartupStatus().state == StartupState::Disabled;
+    InitializeStartupPreference();
+    passed = passed && QueryStartupStatus().state == StartupState::Enabled;
+    passed = passed && ReadStartupCommand(command) == ERROR_SUCCESS && command == StartupCommand();
+    passed = passed && SetStartupEnabled(false).state == StartupState::Disabled;
+    InitializeStartupPreference();
+    passed = passed && QueryStartupStatus().state == StartupState::Disabled;
+    passed = passed && SetStartupEnabled(true).state == StartupState::Enabled;
+    {
+        RegistryKey key;
+        LONG status = RegCreateKeyExW(HKEY_CURRENT_USER, StartupApprovedKey().c_str(),
+            0, nullptr, 0, KEY_SET_VALUE, nullptr, &key.handle, nullptr);
+        BYTE approval[12]{};
+        approval[0] = 3;
+        passed = passed && status == ERROR_SUCCESS;
+        if (status == ERROR_SUCCESS) {
+            passed = passed && RegSetValueExW(key.handle, kStartupValue, 0, REG_BINARY,
+                                              approval, sizeof(approval)) == ERROR_SUCCESS;
+        }
+    }
+    passed = passed && QueryStartupStatus().state == StartupState::DisabledByUser;
+    passed = passed && SetStartupEnabled(true).state == StartupState::DisabledByUser;
+    InitializeStartupPreference();
+    passed = passed && QueryStartupStatus().state == StartupState::DisabledByUser;
+    passed = passed && SetStartupEnabled(false).state == StartupState::Disabled;
+    // External removal of a Run entry must survive subsequent app launches.
+    InitializeStartupPreference();
+    passed = passed && QueryStartupStatus().state == StartupState::Disabled;
+    passed = passed && SetStartupEnabled(true).state == StartupState::DisabledByUser;
+    passed = passed && ReadStartupCommand(command) == ERROR_SUCCESS;
+    {
+        RegistryKey key;
+        LONG status = RegOpenKeyExW(HKEY_CURRENT_USER, StartupApprovedKey().c_str(),
+                                    0, KEY_QUERY_VALUE | KEY_SET_VALUE, &key.handle);
+        BYTE approval[12]{};
+        DWORD type = 0, bytes = sizeof(approval);
+        passed = passed && status == ERROR_SUCCESS;
+        if (status == ERROR_SUCCESS) {
+            passed = passed && RegQueryValueExW(key.handle, kStartupValue, nullptr,
+                &type, approval, &bytes) == ERROR_SUCCESS && approval[0] == 3;
+            approval[0] = 99;
+            passed = passed && RegSetValueExW(key.handle, kStartupValue, 0, REG_BINARY,
+                                              approval, sizeof(approval)) == ERROR_SUCCESS;
+        }
+    }
+    passed = passed && QueryStartupStatus().state == StartupState::Unavailable;
+    passed = passed && SetStartupEnabled(true).state == StartupState::Unavailable;
+    // Only remove the synthetic per-test subtree, never real startup keys.
+    RegDeleteTreeW(HKEY_CURRENT_USER, StartupTestRoot().c_str());
+    DeleteFileW(marker.c_str());
+    return passed;
 }
 
 std::wstring BuildHotkeyText(UINT modifiers, UINT virtualKey) {

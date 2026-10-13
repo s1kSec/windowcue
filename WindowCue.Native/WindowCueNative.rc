@@ -4,4 +4,8 @@
 IDI_WINDOWCUE ICON "..\\WindowCue\\Assets\\WindowCue.ico"
 IDR_SUN_SVG RCDATA "assets\\sun.svg"
 IDR_MOON_SVG RCDATA "assets\\moon.svg"
+IDR_SETTINGS_DARK_SVG RCDATA "assets\\settings-dark.svg"
+IDR_SETTINGS_LIGHT_SVG RCDATA "assets\\settings-light.svg"
+IDR_GITHUB_DARK_SVG RCDATA "assets\\github-dark.svg"
+IDR_GITHUB_LIGHT_SVG RCDATA "assets\\github-light.svg"
 1 RT_MANIFEST "app.manifest"

@@ -77,6 +77,16 @@ bool SaveDarkModePreference(bool darkMode);
 bool IsSelfHotkeyInitialized();
 bool MarkSelfHotkeyInitialized();
 
+enum class StartupState { Disabled, Enabled, DisabledByUser, DisabledByPolicy, Unavailable };
+struct StartupStatus {
+    StartupState state{StartupState::Unavailable};
+    std::wstring detail;
+};
+StartupStatus QueryStartupStatus();
+StartupStatus SetStartupEnabled(bool enabled);
+void InitializeStartupPreference();
+bool RunStartupSelfTests();
+
 HBITMAP RenderSvgResource(HINSTANCE instance, int resourceId, int pixelSize);
 
 std::wstring FileNameFromPath(const std::wstring& path);

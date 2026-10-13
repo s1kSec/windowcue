@@ -29,7 +29,7 @@
       <Extensions>
         <desktop:Extension Category="windows.startupTask" Executable="app\WindowCue.exe"
                            EntryPoint="Windows.FullTrustApplication">
-          <desktop:StartupTask TaskId="WindowCueStartup" Enabled="false"
+          <desktop:StartupTask TaskId="WindowCueStartup" Enabled="true"
                                DisplayName="__DISPLAY_NAME__" />
         </desktop:Extension>
       </Extensions>

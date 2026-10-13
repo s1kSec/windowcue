@@ -16,8 +16,10 @@
 - `SHA256SUMS.txt`：ZIP 的 SHA256，适合随 Release 发布。
 - `report.json`：构建和验证记录，留在本地；编译/资源/依赖检查日志及隔离测试设置位于语言子目录。
 
-脚本检查 PE x64、版本资源、系统 DLL 导入表及 ZIP 解压前后 EXE 哈希。`/MT` 静态链接 C/C++ 运行时，ZIP 无需 .NET 或另行安装 VC++ Redistributable。`-RunSelfTests` 使用解压后的 EXE 在隔离配置目录执行绑定与 SVG 自测；`-RunStartupTest` 以隐藏窗口启动，验证正常窗口创建和消息循环响应，然后只终止该新测试进程。正常托盘退出未自动验证，报告明确记录此边界；基础测试不代表所有界面或系统版本已经验证。测试不操作已有 WindowCue 进程或用户配置，启动测试需 Windows 桌面。
+脚本检查 PE x64、版本资源、系统 DLL 导入表及 ZIP 解压前后 EXE 哈希。`/MT` 静态链接 C/C++ 运行时，ZIP 无需 .NET 或另行安装 VC++ Redistributable。`-RunSelfTests` 使用解压后的 EXE 在隔离配置目录执行绑定、SVG 与自启动自测。`-RunStartupTest` 不覆盖 GUI 的 `ShowWindow` 行为，检查应用自行保持主窗口隐藏、消息循环响应、首次默认注册隔离启动值及重复启动退出；随后只终止新建测试进程并清理本次精确隔离注册表子树。测试环境变量将启动注册隔离到 `HKCU\Software\WindowCue\StartupTests\<目录哈希>`，不操作真实 Run/StartupApproved 或已有 WindowCue 进程、用户配置。
 
-Release 仅上传验证通过的便携 ZIP 与 `SHA256SUMS.txt`。独立 EXE 未签名。Store 未签名 MSIX 和 LocalTest 签名 MSIX 均不属于 GitHub 正式用户安装包；不得上传证书、私钥、本地测试配置、构建日志或中间产物。
+正常托盘菜单退出、真实注销/登录自启动及全部 Windows 版本尚需实机验证；报告保留这些边界。启动测试需要 Windows 桌面。`WINDOWCUE_SETTINGS_DIR` 是测试隔离入口，设置该变量时不会注册真实登录启动项。
 
-“便携”表示无需安装；程序默认设置仍保存到 `%LOCALAPPDATA%\WindowCue`。
+Release 上传验证通过的 CN/EN 便携 ZIP 与 `SHA256SUMS.txt`。独立 EXE 未签名。可同时附上中文正式身份的未签名 Store MSIX，文件名及说明必须标注 **仅供开发者提交 Partner Center，不能直接安装**，并把哈希纳入校验文件；该附件不表示通过 Store 认证。英文正式产品身份尚未提供。LocalTest MSIX、证书、私钥、本地测试配置、构建日志及中间产物不随 Release 发布。
+
+“便携”表示无需安装；程序默认设置仍保存到 `%LOCALAPPDATA%\WindowCue`。首次正常运行默认启用当前用户登录自启动，并静默驻留托盘；在主题按钮左侧的齿轮设置中关闭或开启。`Alt+P` 或双击托盘图标打开界面；程序未运行时 `--show` 启动并显示界面，重复启动静默退出。启用期间保留 EXE 路径，移动后从新位置运行会更新仍启用的注册；删除前关闭自启动。

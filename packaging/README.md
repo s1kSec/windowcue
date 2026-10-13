@@ -1,6 +1,14 @@
 # WindowCue Microsoft Store MSIX 打包
 
-此目录为 `WindowCue.Native` 增加独立的命令行 MSIX 构建、检查与本地测试流程。中文和英文分别生成一个只含对应语言 EXE 的包，不合并为双语言程序或双入口包。现有业务源码、`WindowCue.Native/build.ps1`、旧 .NET 分支及 `dist/` 独立 EXE 发布方式保持不变。
+此目录为 `WindowCue.Native` 提供独立的命令行 MSIX 构建、检查与本地测试流程。中文和英文分别生成一个只含对应语言 EXE 的包，不合并为双语言程序或双入口包。中文沿用正式 Partner Center 身份；英文正式身份尚未提供，只能使用 LocalTest 身份做开发验证。
+
+## 2026-10-13：1.0.2.0 默认自启动
+
+当前版本为 `1.0.2.0`。MSIX 清单声明唯一的 `WindowCueStartup`，默认 `Enabled="true"`；首次激活后由 Windows 启动任务机制生效。原生代码识别包身份，通过 WinRT StartupTask API 查询、启用或禁用，不把 WindowsApps 的版本化路径写入传统 Run 项。Windows 用户或策略禁用状态优先，设置开关不会覆盖，用户禁用时可打开系统启动设置。
+
+两种发行方式启动后均静默驻留托盘；按 `Alt+P` 或双击托盘打开。齿轮设置提供自启动开关和 GitHub 入口，亮色底色为 `#f5f8fc`。构建增加绑定、SVG、自启动三项原生自测，以及清单打包前/解包后的启动任务校验。自测通过 `WINDOWCUE_SETTINGS_DIR` 隔离设置和测试注册表；它验证便携后端，不等于已安装 MSIX 的 WinRT 后端已完成运行验证。
+
+中文未签名 Store MSIX 可作为 GitHub Release 的 **开发者提交附件**，不能直接安装，也不代表商店上架或认证。实际构建结果见 [VALIDATION.md](VALIDATION.md)，已安装 MSIX 开关、注销/登录与 WACK 仍需在隔离 Windows 用户中验证。以下有日期的旧版本段落保留为历史记录。
 
 ## 2026-10-12：1.0.1.0 中文 Store 包
 
@@ -123,7 +131,7 @@ winget install --id Microsoft.WindowsSDK.10.0.26100 --exact
 | `DisplayName` | `WindowCue` |
 | `ExpectedPackageFamilyName` | `s1ksec.WindowCue_14ska59yrcwza` |
 | `StoreId` | `9NGPFSSGL2JX` |
-| 包版本 | `1.0.0.0` |
+| 包版本 | `1.0.2.0` |
 
 英文独立产品尚未提供 `IdentityName`、预留的 `DisplayName`、`ExpectedPackageFamilyName` 和 `StoreId`。目前 EN 的 Publisher/PublisherDisplayName 使用相同开发者账户值；创建 EN 产品后仍需核对其 Product identity 页面。正式商店构建至少需要实际 Name、Publisher、PublisherDisplayName 和预留名称；填写 PFN 可额外验证身份计算结果。不得在中文 Name 后自行追加 `.EN` 作为正式身份。
 
@@ -140,7 +148,7 @@ winget install --id Microsoft.WindowsSDK.10.0.26100 --exact
 ```powershell
 Set-Location 'E:\project\vibeCoding\codex侧边聊天'
 
-# 中文正式 Store 身份包；运行两个隔离配置目录中的原生自测。
+# 中文正式 Store 身份包；运行绑定、SVG、自启动三项隔离原生自测。
 $cn = & .\packaging\Build-Msix.ps1 -Language CN -Mode Store -RunSelfTests
 
 # 英文独立本地测试包；EN 正式身份尚未提供。
@@ -170,7 +178,7 @@ $en.PackagePath
 - `EntryPoint="Windows.FullTrustApplication"` 和 `runFullTrust`，以当前登录用户的普通桌面进程权限运行；完整信任不授予管理员权限或 `uiAccess`。
 - CN 仅声明 `zh-cn`，EN 仅声明 `en-us`，各包只有 `app\WindowCue.exe` 一个语言版本。
 - 图标从已有 `WindowCue/Assets/WindowCue.ico` 生成；含 50×50 StoreLogo、44×44/150×150 主图及 16/24/32/48/256 目标尺寸 PNG，使用 MakePri 索引。
-- 声明 `windows.startupTask`，`Enabled="false"`，由用户在 Windows 启动应用设置中主动启用。
+- 声明 `windows.startupTask`，`TaskId="WindowCueStartup"`、`Enabled="true"`；首次激活后默认随用户登录启动，Windows 或应用设置均可关闭。
 
 需要重建图标时运行 `& .\packaging\New-Assets.ps1`；正常构建也会生成图标。商店详情页所需截图和营销图应另外准备，不能用安装资产替代实际应用截图。[手工桌面打包清单](https://learn.microsoft.com/en-us/windows/msix/desktop/desktop-to-uwp-manual-conversion)、[MakeAppx](https://learn.microsoft.com/en-us/windows/msix/package/create-app-package-with-makeappx-tool)
 
@@ -253,16 +261,16 @@ Add-AppxPackage -Path $packagePath
 | 枚举与窗口切换 | `Platform.cpp` 枚举顶层窗口；`:512` 使用 `SetForegroundWindow`，`:519` 使用 `AttachThreadInput` | 普通、最小化、Win+D 后窗口；同名多个窗口准确绑定；前台限制下行为；中等权限不能保证控制提升权限窗口 |
 | DWM 实时预览 | `Main.cpp:688` 使用 `DwmRegisterThumbnail` | 窗口切换、悬停、缩放/DPI、Win+D 和多窗口；包激活下预览持续更新 |
 | 系统托盘 | `Main.cpp:1135` 使用 `Shell_NotifyIconW`；关闭/最小化进入托盘，双击恢复 | 关闭后进程驻留，托盘恢复与退出；Explorer 重启后的实际表现也须验证 |
-| 开机启动 | 清单 `desktop:StartupTask` 默认禁用；源码未实现启动任务 API 或注册表 Run 写入 | 首次启动后在设置 → 应用 → 启动中主动启用；注销/登录验证；禁用后不再启动 |
+| 开机启动 | 清单 `desktop:StartupTask` 默认启用；包身份使用 WinRT StartupTask，便携版使用自己的 HKCU Run 值 | 首次激活后注销/登录验证静默驻留；应用开关关闭/重启保持关闭；Windows 禁用不会被应用覆盖 |
 | 文件权限 | `Platform.cpp:150` 用 `SHGetKnownFolderPath(FOLDERID_LocalAppData)` 解析配置目录，不写 EXE 目录 | 从只读 WindowsApps 安装路径运行仍能保存配置；普通用户不需管理员权限 |
 | 配置持久化 | `Platform.cpp:547` 保存 `bindings.json`，`:591` 保存 `appearance.txt`，`:607` 保存初始化标记 | 首次运行、退出重启、版本升级、卸载后重装；检查逻辑路径及实际物理路径，确认是否采用 MSIX 虚拟化/私有映射 |
 | 原配置与语言版共存 | `Main.cpp:631` 的 LoadBindings 会匹配并重新保存存活 HWND；旧版共用 `%LocalAppData%\WindowCue` | 不在真实用户首次启动测试；分别确认两个产品的配置隔离/共享实际行为，不承诺自动迁移或共享 |
 
 完整信任意味着应用仍以普通用户中等完整性等级运行，MSIX 安装目录只读，部分文件/注册表操作可能被虚拟化。不能仅从源代码中的 `%LocalAppData%\WindowCue` 推断安装后所有 Windows 版本的物理存储位置与卸载行为。[打包桌面应用运行模型](https://learn.microsoft.com/en-us/windows/msix/desktop/desktop-to-uwp-behind-the-scenes)
 
-当前 `startupTask` 不新增设置按钮；用户在 Windows 中管理启用状态。不要把路径固定到版本化 WindowsApps 的传统启动快捷方式作为 Store 开机启动方案，也不要使用 `shell:startup` 搬运包内 EXE。[StartupTask 官方说明](https://learn.microsoft.com/en-us/uwp/api/windows.applicationmodel.startuptask?view=winrt-26100)
+主题按钮左侧的齿轮设置提供自启动开关；Windows 用户禁用时通过系统“启动应用”重新启用，策略禁用时按策略处理。不要把路径固定到版本化 WindowsApps 的传统启动快捷方式作为 Store 开机启动方案，也不要使用 `shell:startup` 搬运包内 EXE。[StartupTask 官方说明](https://learn.microsoft.com/en-us/uwp/api/windows.applicationmodel.startuptask?view=winrt-26100)
 
-原有代码还没有处理 Explorer 重启后的 `TaskbarCreated` 托盘重建，没有单实例互斥体，启动时始终显示主窗口，也没有专门的 Store 更新关闭/重启处理。它们是应复测的现有行为：启用开机启动后会显示主窗口；重复启动可能出现快捷键占用；Explorer 重启后可能需要重启 WindowCue 恢复托盘。这次仅增加打包目录，未扩展业务功能。
+当前实现启动后静默驻留托盘，同一配置目录已有实例时重复启动静默退出；`--show` 仅用于新实例显式显示主窗口，已有实例请使用快捷键或托盘图标打开。Explorer 重启、Store 更新后的激活及真实注销/登录仍需在已安装包环境验证，不能以原生 EXE 自测代替这些操作。
 
 ## WACK 验证
 
@@ -292,16 +300,16 @@ $appcert = 'C:\Program Files (x86)\Windows Kits\10\App Certification Kit\appcert
 3. 进入 CN 产品，新建 submission；设置市场、受众、定价、分类、年龄分级和产品声明。
 4. Packages 上传 **未签名的 CN Store `.msix`**；核对其 x64、版本、支持语言、包名和 PFN。不要上传 EN LocalTest 包、`.cer` 或本地签名包。以后 EN 在自己的产品中提交 EN Store 包。
 5. 准备准确的中文商店说明、至少一张真实应用截图、Logo、功能说明与支持信息；英文产品准备英文材料。按实际个人信息处理填写隐私政策 URL，需提供时使用公开可访问的网址，不编造未上线地址。
-6. Submission options 填写 `runFullTrust` 使用原因及测试操作说明。提示审核员关闭/最小化会驻留托盘，可双击托盘恢复、右键退出；`Alt+P` 可唤出；启动功能默认禁用且由用户控制。
+6. Submission options 填写 `runFullTrust` 使用原因及测试操作说明。提示审核员启动后静默驻留托盘，可双击托盘恢复、右键退出；`Alt+P` 可唤出；启动功能默认启用，齿轮设置或 Windows 可关闭，用户及策略禁用状态优先。
 7. 所有必填项和包校验通过后提交认证。最终商店签名由 Microsoft 提供，本目录不会替用户上传或触发正式发布。
 
 可使用的完整信任说明：
 
-> WindowCue 是本地桌面窗口管理工具。它需要在用户的普通桌面会话中枚举顶层窗口、获取窗口图标及 DWM 实时预览、注册用户选择的全局快捷键、恢复或最小化目标窗口，并提供系统托盘常驻入口，因此需要 runFullTrust。应用以当前用户权限运行，不请求管理员提升或 uiAccess；配置写入当前用户可写目录。开机启动默认禁用，可由用户在 Windows 启动设置中启用或禁用。
+> WindowCue 是本地桌面窗口管理工具。它需要在用户的普通桌面会话中枚举顶层窗口、获取窗口图标及 DWM 实时预览、注册用户选择的全局快捷键、恢复或最小化目标窗口，并提供系统托盘常驻入口，因此需要 runFullTrust。应用以当前用户权限运行，不请求管理员提升或 uiAccess；配置写入当前用户可写目录。首次激活后开机启动默认启用并静默驻留托盘，可由用户在应用齿轮设置或 Windows 启动设置中关闭；Windows 用户及策略禁用状态优先。
 
 英文审核说明：
 
-> WindowCue is a local desktop window manager. The runFullTrust capability is required to enumerate top-level windows, retrieve icons and DWM previews, register user-selected global hotkeys, restore or minimize target windows, and provide a system tray entry. It runs with the current user's normal privileges, without requesting elevation or uiAccess. Settings are written to a user-writable location. Startup is disabled by default and is controlled by the user in Windows startup settings.
+> WindowCue is a local desktop window manager. The runFullTrust capability is required to enumerate top-level windows, retrieve icons and DWM previews, register user-selected global hotkeys, restore or minimize target windows, and provide a system tray entry. It runs with the current user's normal privileges, without requesting elevation or uiAccess. Settings are written to a user-writable location. Startup is enabled by default after first activation and starts quietly in the system tray. Users can disable it in the app's gear settings or Windows Startup apps. User and policy disable states are respected.
 
 **剩余阻碍**：EN 正式产品身份待提供；已安装包功能兼容性与 WACK 待完成；Store 截图、描述、隐私政策适用性及其他必填资料待准备/核对。中文正式身份和本地编译/MakeAppx 打包已完成，未上传商店。
 

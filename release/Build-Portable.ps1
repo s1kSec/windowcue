@@ -80,7 +80,8 @@ END
         $compileArgs += @('/link', '/MACHINE:X64', '/INCREMENTAL:NO', '/SUBSYSTEM:WINDOWS,6.02', '/DYNAMICBASE', '/NXCOMPAT')
         $compileArgs += @($tools.LibraryPaths | ForEach-Object { "/LIBPATH:$_" })
         $compileArgs += @('user32.lib', 'gdi32.lib', 'shell32.lib', 'shlwapi.lib', 'ole32.lib', 'dwmapi.lib',
-            'd2d1.lib', 'd3d11.lib', 'dxgi.lib', 'msimg32.lib', 'uxtheme.lib')
+            'd2d1.lib', 'd3d11.lib', 'dxgi.lib', 'msimg32.lib', 'uxtheme.lib',
+            'advapi32.lib', 'runtimeobject.lib', 'windowsapp.lib')
         $previousPath = $env:PATH
         try {
             $env:PATH = (Split-Path -Parent $tools.Cl) + ';' + $previousPath
@@ -96,7 +97,22 @@ END
     } | Sort-Object -Unique)
     $allowedSystemDlls = @('KERNEL32.dll', 'USER32.dll', 'GDI32.dll', 'SHELL32.dll', 'SHLWAPI.dll', 'ole32.dll',
         'DWMAPI.dll', 'd2d1.dll', 'd3d11.dll', 'dxgi.dll', 'MSIMG32.dll', 'UxTheme.dll', 'ADVAPI32.dll',
-        'OLEAUT32.dll', 'COMDLG32.dll', 'COMCTL32.dll')
+        'OLEAUT32.dll', 'COMDLG32.dll', 'COMCTL32.dll', 'COMBASE.dll',
+        'api-ms-win-core-winrt-l1-1-0.dll', 'api-ms-win-core-winrt-error-l1-1-0.dll',
+        'api-ms-win-core-winrt-string-l1-1-0.dll',
+        # windowsapp.lib imports Windows API-set contracts supplied by the OS.
+        # Keep the observed contract names explicit; never permit arbitrary DLLs.
+        'api-ms-win-core-processenvironment-l1-1-0.dll', 'api-ms-win-core-file-l1-1-0.dll',
+        'api-ms-win-core-handle-l1-1-0.dll', 'api-ms-win-core-errorhandling-l1-1-0.dll',
+        'api-ms-win-core-synch-l1-1-0.dll', 'api-ms-win-core-processthreads-l1-1-0.dll',
+        'api-ms-win-core-libraryloader-l1-2-0.dll', 'api-ms-win-core-heap-l2-1-0.dll',
+        'api-ms-win-core-largeinteger-l1-1-0.dll', 'api-ms-win-core-synch-l1-2-0.dll',
+        'api-ms-win-core-processthreads-l1-1-1.dll', 'api-ms-win-core-psapi-l1-1-0.dll',
+        'api-ms-win-core-string-l1-1-0.dll', 'api-ms-win-appmodel-runtime-l1-1-0.dll',
+        'api-ms-win-core-libraryloader-l1-2-1.dll', 'api-ms-win-core-rtlsupport-l1-1-0.dll',
+        'api-ms-win-core-interlocked-l1-1-0.dll', 'api-ms-win-core-heap-l1-1-0.dll',
+        'api-ms-win-core-console-l1-1-0.dll', 'api-ms-win-core-fibers-l1-1-0.dll',
+        'api-ms-win-core-localization-l1-2-0.dll')
     if ($imports.Count -eq 0) { throw 'No PE imports detected; dependency inspection cannot be trusted.' }
     foreach ($dll in $imports) {
         if ($dll -notin $allowedSystemDlls) { throw "Unexpected runtime dependency $dll; audit it before shipping." }
@@ -120,8 +136,12 @@ WindowCue $version - Windows x64 中文便携版
 选择窗口卡片，在底部点击快捷键输入区，按带修饰键的组合并点击“绑定”。
 目标窗口在前台时，快捷键将其最小化；否则恢复并切换到该窗口。
 首次运行默认 Alt+P 唤出或隐藏 WindowCue；已有自定义绑定优先，已取消的不再自动绑定。
+启动后静默驻留托盘；按 Alt+P 或双击托盘图标打开界面。程序未运行时可用 WindowCue.exe --show 启动并显示界面。
+首次正常运行默认启用当前用户登录时自启动。在主题按钮左侧的齿轮设置中可自由开关。
+若 Windows 已禁用启动项，请在 Windows“启动应用”中重新启用；应用不会覆盖系统禁用状态。
+启用后请保留解压目录，移动程序后需从新位置运行以更新启动路径；删除前建议关闭自启动。
 关闭或最小化窗口会进入托盘；双击托盘图标恢复，右键托盘选择“退出”。
-点击标题栏太阳/月亮按钮切换主题。
+点击标题栏太阳/月亮按钮切换主题，齿轮设置中的 GitHub 图标打开项目仓库。
 
 “便携版”指无需安装的独立程序；默认配置仍保存于 %LOCALAPPDATA%\WindowCue。
 请阅读同目录 PRIVACY.md。反馈：https://github.com/s1kSec/windowcue/issues
@@ -138,8 +158,12 @@ This standalone EXE is unsigned. No Store MSIX or local test-signing certificate
 Select a window card, click the shortcut input at the bottom, press a modifier-key combination, and click Bind.
 The shortcut minimizes a foreground target, or restores and switches to it otherwise.
 Alt+P shows/hides WindowCue on first use. Existing custom bindings take priority; a canceled binding stays canceled.
+Launch starts silently in the tray. Press Alt+P or double-click the tray icon to open the UI. When not already running, WindowCue.exe --show starts with the UI visible.
+The first normal launch enables startup at current-user sign-in. Toggle it in the gear to the left of the theme button.
+If Windows has disabled startup, re-enable it in Windows Startup apps; the app respects the system-disabled state.
+Keep the extracted folder while startup is enabled. Launch from a new location after moving it; disable startup before deleting it.
 Closing or minimizing moves the app to the tray. Double-click its icon to restore; use the tray Exit command to quit.
-Click the sun/moon button to change the theme.
+Click the sun/moon button to change the theme; the GitHub icon in settings opens the project repository.
 
 Portable means no installer is required; settings are saved in %LOCALAPPDATA%\WindowCue by default.
 Read PRIVACY.md in this folder. Feedback: https://github.com/s1kSec/windowcue/issues
@@ -164,7 +188,7 @@ Updates: https://github.com/s1kSec/windowcue/releases
         try {
             $env:WINDOWCUE_SETTINGS_DIR = Join-Path $variantRoot 'self-test-settings'
             New-Item -ItemType Directory -Path $env:WINDOWCUE_SETTINGS_DIR -Force | Out-Null
-            foreach ($test in @('--binding-self-test', '--svg-self-test')) {
+            foreach ($test in @('--binding-self-test', '--svg-self-test', '--startup-self-test')) {
                 $process = Start-Process -FilePath $extractedExe -ArgumentList $test -WindowStyle Hidden -PassThru
                 if (-not $process.WaitForExit(30000)) { $process.Kill(); throw "$test timed out." }
                 $tests += [pscustomobject]@{ Test = $test; ExitCode = $process.ExitCode; Passed = ($process.ExitCode -eq 0) }

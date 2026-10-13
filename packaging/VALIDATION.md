@@ -1,5 +1,24 @@
 # WindowCue MSIX 实际验证记录
 
+## 2026-10-13：1.0.2.0 自启动与设置
+
+中文、英文最终原生 Release/x64 编译和桌面 UI/DWM 回归均通过（`CN=0`、`EN=0`）。新增检查覆盖齿轮在主题按钮左侧、常用 DPI 下命中、亮色底色 `#f5f8fc`、设置有效状态、键盘操作及快捷键录入；原有布局、DWM 和窗口切换回归保留。
+
+| 检查 | 结果 |
+| --- | --- |
+| CN/EN 便携版 | 两份 ZIP 构建成功，x64/版本/系统 DLL 与 API-set 检查通过，解压 EXE 哈希一致 |
+| 原生自测 | CN/EN 便携 EXE 及 CN MSIX 打包 EXE 的绑定、SVG、自启动自测均为 `0` |
+| 默认启动 | 两语言主窗口自行保持隐藏，消息响应、首次隔离自启动注册和重复启动静默退出通过 |
+| 自启动状态 | 隔离 Run 项验证开启、关闭持久化、Windows 禁用保留与未知状态安全处理；不操作真实启动项 |
+| 中文 MSIX | 正式 PFN `s1ksec.WindowCue_14ska59yrcwza`、`1.0.2.0`、x64、未签名 |
+| 清单与完整性 | StartupTask ID 匹配且默认启用；MakeAppx 完整验证（未用 `/nv`）、解包 EXE 哈希一致 |
+
+中文 MSIX 位于 `output/s1ksec.WindowCue_1.0.2.0_x64_CN_Store.msix`，大小 `389402` 字节，SHA256 为 `B668997A88ADB05245D0D20EA78E8983FFAC6DFC7B0B38DAE85DE0B14E65AF69`。同路径 `.report.json` 保存详细结果，构建日志目录为 `artifacts/Store-CN-20261013-125051-b2d4d1fb/`。
+
+便携包和报告位于 `../dist/release/20261013-125047-45c925e8/`；最终桌面回归日志位于 `../WindowCue.Native/artifacts/regression-1.0.2-final-1950a401fd694cd584a95b3d4a72991e/`。发布附件命名及三份文件的校验值见 [1.0.2.0 Release 说明](../release/RELEASE-NOTES-1.0.2.0.md)。中文 MSIX 仅作为明确标记的开发者提交附件，不是直接安装包。
+
+本次没有安装或替换现有 MSIX、修改证书信任、执行真实注销/登录、Windows 10 实机测试、WACK 或 Store 上传/认证；已安装新版 MSIX 的 WinRT 开关仍需隔离用户验证。便携烟测验证静默驻留及响应，未自动操作托盘菜单退出。以下旧版本记录保留。
+
 ## 2026-10-12：1.0.1.0 修复后验证
 
 已完成中文、英文原生 Release 与 UI 回归编译，并构建中文正式身份 MSIX。本次只更新源码及构建 Store 包，没有发布新的 GitHub Release，也未上传或提交商店。

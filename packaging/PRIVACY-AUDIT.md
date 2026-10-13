@@ -1,5 +1,13 @@
 # WindowCue 用户数据处理专项审计
 
+## 2026-10-13：1.0.2.0 功能变更补充
+
+以下历史审计记录基于 2026-10-11 的源码快照。本次新增自启动后，其“无直接注册表写入”和“StartupTask 默认禁用”的结论不再描述当前版本。
+
+当前 `Platform.cpp` 的 `QueryStartupStatus`、`SetStartupEnabled`、`InitializeStartupPreference` 使用包身份选择后端：MSIX 通过 WinRT `StartupTask`，便携版写入/删除自己的 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\WindowCue` 值并只读 `StartupApproved`。便携版新增 `startup-preference.txt`。MSIX 清单默认 `Enabled="true"`，首次激活后由 Windows 管理，用户/策略禁用状态优先。`WINDOWCUE_SETTINGS_DIR` 将启动注册改为 `HKCU\Software\WindowCue\StartupTests\<目录哈希>`，测试不会写真实登录项。
+
+设置增加用户点击后用默认浏览器打开的固定 GitHub 项目 URL，不附带窗口标题、预览或配置。根目录和打包目录的隐私政策已同步上述行为及关闭/清除步骤。本补充是新增功能的源码说明，不是重做完整隐私审计，也不证明已安装 MSIX 的物理配置位置、注销/登录、卸载清理或 Store 认证已验证。
+
 审计日期：**2026-10-11（Asia/Shanghai）**。方法：按实际入口、读取来源、内存转移、文件/系统接口终点逐项静态追踪，并独立交叉复核。政策产物：[PRIVACY.md](PRIVACY.md)。
 
 ## 1. 范围与证据等级

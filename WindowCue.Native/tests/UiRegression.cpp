@@ -17,10 +17,27 @@ HRESULT WINAPI RecordThumbnailProperties(
 }
 }
 
+// Exercise the settings message handlers without touching Windows startup
+// registration or opening a browser. The production backend has its own tests.
+namespace windowcue {
+StartupStatus regressionStartupStatus{StartupState::Disabled, L"Regression startup status"};
+int regressionStartupChanges = 0;
+StartupStatus QueryRegressionStartupStatus() { return regressionStartupStatus; }
+StartupStatus SetRegressionStartupEnabled(bool enabled) {
+    ++regressionStartupChanges;
+    regressionStartupStatus.state = enabled ? StartupState::Enabled : StartupState::Disabled;
+    return regressionStartupStatus;
+}
+}
+
 #define DwmUpdateThumbnailProperties RecordThumbnailProperties
+#define QueryStartupStatus QueryRegressionStartupStatus
+#define SetStartupEnabled SetRegressionStartupEnabled
 #define wWinMain WindowCueProductionEntry
 #include "../src/Main.cpp"
 #undef wWinMain
+#undef SetStartupEnabled
+#undef QueryStartupStatus
 #undef DwmUpdateThumbnailProperties
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
@@ -46,6 +63,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
     int failure = 0;
     auto check = [&](bool ok, int code) { if (!ok && !failure) failure = code; };
+    check(!IsWindowVisible(host), 58);
+    g.darkMode = false;
+    check(P().windowBackground == RGB(245, 248, 252), 59);
+    g.darkMode = true;
     // A fresh configuration creates Alt+P and persists the semantic self target.
     LoadBindings();
     int selfIndex = BindingIndexForWindow(host);
@@ -121,6 +142,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
                              SWP_NOZORDER | SWP_NOACTIVATE);
                 ResizeForContent();
                 Layout();
+                check(g.settingsButtonRect.right == g.themeButtonRect.left &&
+                      RectWidth(g.settingsButtonRect) == Scale(38), 60);
+                POINT settingsPoint{g.settingsButtonRect.left + Scale(10),
+                                     g.settingsButtonRect.top + Scale(10)};
+                ClientToScreen(host, &settingsPoint);
+                check(HitTest(settingsPoint) == HTCLIENT, 61);
                 RECT bounds{};
                 GetWindowRect(host, &bounds);
                 MONITORINFO monitor{sizeof(monitor)};
@@ -176,6 +203,80 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     UpdateWindow(host);
     UpdateThumbnails();
     check(g.windows[1].thumbnailVisible, 29);
+    // The gear opens an owned settings window. Native controls provide real
+    // focus traversal; the rendered switch reflects effective Windows state.
+    POINT gearPoint{g.settingsButtonRect.left + Scale(10), Scale(10)};
+    SendMessageW(host, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(gearPoint.x, gearPoint.y));
+    SendMessageW(host, WM_LBUTTONUP, 0, MAKELPARAM(gearPoint.x, gearPoint.y));
+    check(g.settingsWindow && IsWindowVisible(g.settingsWindow) &&
+          GetWindow(g.settingsWindow, GW_OWNER) == host, 62);
+    check(g.settingsDarkIcon && g.settingsLightIcon && g.githubDarkIcon && g.githubLightIcon, 63);
+    if (g.settingsWindow) {
+        wchar_t buttonText[256]{};
+        GetWindowTextW(g.startupButton, buttonText, static_cast<int>(std::size(buttonText)));
+        check(std::wstring(buttonText) == T().startupEnable && IsWindowEnabled(g.startupButton), 64);
+        SendMessageW(g.startupButton, BM_CLICK, 0, 0);
+        check(regressionStartupChanges == 1 && g.startupStatus.state == StartupState::Enabled, 65);
+        GetWindowTextW(g.startupButton, buttonText, static_cast<int>(std::size(buttonText)));
+        check(std::wstring(buttonText) == T().startupDisable, 66);
+        MSG enter{};
+        enter.hwnd = g.startupButton;
+        enter.message = WM_KEYDOWN;
+        enter.wParam = VK_RETURN;
+        SetFocus(g.startupButton);
+        check(HandleSettingsMessage(enter) && regressionStartupChanges == 2 &&
+              g.startupStatus.state == StartupState::Disabled, 67);
+        for (StartupState state : {StartupState::DisabledByUser, StartupState::DisabledByPolicy,
+                                    StartupState::Unavailable}) {
+            regressionStartupStatus.state = state;
+            RefreshStartupControls();
+            GetWindowTextW(g.startupButton, buttonText, static_cast<int>(std::size(buttonText)));
+            check(IsWindowEnabled(g.startupButton) == (state == StartupState::DisabledByUser), 68);
+            if (state == StartupState::DisabledByUser) {
+                check(std::wstring(buttonText) == T().startupWindowsSettings, 69);
+            }
+            wchar_t statusText[512]{};
+            GetWindowTextW(g.startupStatusLabel, statusText, static_cast<int>(std::size(statusText)));
+            check(std::wstring(statusText).find(StartupStateText(state)) == 0, 70);
+        }
+        regressionStartupStatus.state = StartupState::Disabled;
+        RefreshStartupControls();
+        MSG tab{};
+        tab.hwnd = g.startupButton;
+        tab.message = WM_KEYDOWN;
+        tab.wParam = VK_TAB;
+        SetFocus(g.startupButton);
+        check(HandleSettingsMessage(tab) && GetFocus() == g.githubButton, 71);
+        MSG escape = tab;
+        escape.hwnd = g.githubButton;
+        escape.wParam = VK_ESCAPE;
+        check(HandleSettingsMessage(escape) && !IsWindowVisible(g.settingsWindow), 72);
+        BYTE originalKeys[256]{};
+        BYTE controlKeys[256]{};
+        GetKeyboardState(originalKeys);
+        std::copy(std::begin(originalKeys), std::end(originalKeys), std::begin(controlKeys));
+        controlKeys[VK_CONTROL] |= 0x80;
+        SetKeyboardState(controlKeys);
+        BeginCapture();
+        SendMessageW(host, WM_KEYDOWN, VK_OEM_COMMA, 0);
+        check(g.capturing && g.captured && g.capturedModifiers == MOD_CONTROL &&
+              g.capturedKey == VK_OEM_COMMA && !IsWindowVisible(g.settingsWindow), 76);
+        EndCapture(false);
+        SendMessageW(host, WM_KEYDOWN, VK_OEM_COMMA, 0);
+        SetKeyboardState(originalKeys);
+        check(IsWindowVisible(g.settingsWindow), 73);
+        for (bool dark : {false, true}) {
+            g.darkMode = dark;
+            ApplySettingsTheme();
+            LOGBRUSH brush{};
+            check(GetObjectW(g.settingsBackgroundBrush, sizeof(brush), &brush) != 0 &&
+                  brush.lbColor == P().windowBackground, 74);
+            UpdateWindow(g.settingsWindow);
+        }
+        HideSettingsWindow();
+        check(std::wstring(kGitHubUrl) == L"https://github.com/s1kSec/windowcue", 75);
+        ActivateWindow(host);
+    }
     auto submittedTransform = [&]() -> const DWM_THUMBNAIL_PROPERTIES* {
         for (auto entry = submissions.rbegin(); entry != submissions.rend(); ++entry) {
             if (entry->thumbnail == thumbnail &&

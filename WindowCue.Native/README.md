@@ -5,13 +5,23 @@
 ## 目标
 
 - C++17 + Win32 + GDI + DWM Thumbnail API；
-- 最低支持 Windows 10 x64；
+- 最低支持 Windows 10 1809（17763）x64；
 - 不使用 Qt、MFC、.NET、WebView 或任何第三方运行库；
 - 使用 `/MT` 静态链接 Microsoft C/C++ 运行时，发布结果为独立 EXE；
 - 只依赖 Windows 自带的系统 DLL；
 - 与现有版本共用 `%LocalAppData%\WindowCue\bindings.json`。
 
-测试或便携场景可通过进程环境变量 `WINDOWCUE_SETTINGS_DIR` 覆盖配置目录；默认行为不变。
+测试可通过进程环境变量 `WINDOWCUE_SETTINGS_DIR` 覆盖配置目录；设置该变量时，自启动后端同时改用 `HKCU\Software\WindowCue\StartupTests\<目录哈希>` 的隔离注册表子树，绝不写入真实登录启动项，因此不应将该测试变量当作生产自启动的自定义配置方案。
+
+## 2026-10-13：1.0.2.0 自启动与设置
+
+- 标题栏主题按钮左侧增加内嵌 SVG 设置齿轮，提供自启动开关和 GitHub 项目入口。
+- 正常启动静默进入托盘；`--startup` 同样静默，`--show` 仅在新实例启动时显式显示主窗口。同一配置目录已有实例时重复启动静默退出，可通过快捷键或托盘恢复。
+- 便携版首次正常启动默认写入当前用户 `Run\WindowCue`，值为带引号的程序路径及 `--startup`；无需管理员权限。应用开关删除/重建自己的启动值，`startup-preference.txt` 记录选择。
+- MSIX 使用包身份对应的 `Windows.ApplicationModel.StartupTask`；清单 `Enabled="true"`，首次激活后由 Windows 负责执行，应用通过 API 开关同一个 `WindowCueStartup`。
+- Windows 已禁用或策略禁用时不会强行启用。Windows 用户禁用状态提供系统“启动应用”入口；便携版只读取 StartupApproved 状态，不修改该系统值。
+- 亮色整体底色为 `#f5f8fc`；设置窗口使用所选主题。
+- `--startup-self-test` 在隔离后端验证默认开启、关闭后不复活、重新开启、系统禁用及外部删除；构建脚本链接 Windows 系统 WinRT 库。
 
 ## 2026-10-12：1.0.1.0 修复与验证
 
@@ -64,7 +74,7 @@
 - 中文界面使用 `Microsoft YaHei UI`、Natural ClearType 与较轻字重；
 - DWM 统一提供整条标题栏的最终底色，客户区不再与其二次混色，并保留真实
   系统边框颜色，避免暗色标题栏分块和亮色顶部锯齿；
-- 关闭及最小化进入系统托盘，双击托盘恢复，托盘菜单可退出；
+- 启动后静默进入系统托盘，关闭及最小化也进入托盘，双击托盘恢复，托盘菜单可退出；
 - 中文、英文两个构建版本。
 
 ## 构建
