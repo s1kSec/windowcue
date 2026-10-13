@@ -23,6 +23,12 @@ WindowCue 是 Windows 窗口快捷键工具：在实时预览列表中选择窗�
 
 Microsoft Store 渠道正在准备：中文正式身份 MSIX 已可构建，**尚未上架或通过商店认证**；英文独立商店产品仍待补齐官方身份。GitHub Release 可附带明确标注的中文未签名 Store 提交包，供开发者提交 Partner Center 使用；普通用户使用便携 ZIP。未签名 MSIX 不能直接作为用户安装包，本地测试签名包和证书不随 Release 发布。
 
+## 2026-10-13：1.0.3.0 图标与交互修正
+
+重画原创六齿圆角设置图标，并修正原生 SVG 渲染器未缩放固定根尺寸的问题：18 像素图标不再被裁切，100%–200% DPI 下保持正确比例。同步调整月亮的光学居中和 GitHub 图标留白。
+
+标题栏按钮提供短时悬停淡入、轻微按压反馈和中英文原生提示，遵循 Windows 动效设置；文字使用窗口所在显示器的 DPI。齿轮设置、自启动和静默托盘行为延续 1.0.2.0，验证范围见 [原生文档](WindowCue.Native/README.md)。
+
 ## 2026-10-13：1.0.2.0 更新
 
 新增齿轮设置、开机自启动开关和 GitHub 项目入口；亮色底色调整为 `#f5f8fc`。便携版使用当前用户 `Run` 启动项；MSIX 使用 Windows `StartupTask`，清单默认启用，首次激活后由 Windows 管理。两种发行方式均静默启动到托盘，保留用户关闭和 Windows 禁用状态。Windows 已禁用时，设置提供系统“启动应用”入口；应用不会覆盖系统的禁用选择。
@@ -63,7 +69,7 @@ Microsoft Store 渠道正在准备：中文正式身份 MSIX 已可构建，**�
 & .\packaging\Build-Msix.ps1 -Language CN -Mode Store -RunSelfTests
 ```
 
-原生 EXE 输出到 `dist\WindowCue.Native\`；便携 ZIP、校验值和构建报告输出到 `dist\release\<运行标识>\`；MSIX 输出到 `packaging\output\`。当前源码及打包版本为 `1.0.2.0`，便携构建和 MSIX 构建共用 `packaging/partner-center.json` 的版本配置。MSIX 打包说明、身份配置、隔离测试及认证边界见 [packaging/README.md](packaging/README.md)。原生实现及回归程序构建见 [WindowCue.Native/README.md](WindowCue.Native/README.md)。
+原生 EXE 输出到 `dist\WindowCue.Native\`；便携 ZIP、校验值和构建报告输出到 `dist\release\<运行标识>\`；MSIX 输出到 `packaging\output\`。当前源码及打包版本为 `1.0.3.0`，便携构建和 MSIX 构建共用 `packaging/partner-center.json` 的版本配置。MSIX 打包说明、身份配置、隔离测试及认证边界见 [packaging/README.md](packaging/README.md)。原生实现及回归程序构建见 [WindowCue.Native/README.md](WindowCue.Native/README.md)。
 
 ## 仓库与反馈
 

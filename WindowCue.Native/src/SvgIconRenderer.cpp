@@ -9,6 +9,7 @@
 
 #include <cstring>
 #include <iterator>
+#include <cmath>
 
 namespace windowcue {
 namespace {
@@ -75,6 +76,18 @@ public:
                 stream.Get(), D2D1::SizeF(static_cast<float>(pixelSize),
                                          static_cast<float>(pixelSize)),
                 &document))) {
+            return nullptr;
+        }
+
+        // The initial viewport does not override a root's fixed width/height.
+        // Fit the viewBox to the requested size: no small-size cropping or
+        // undersized glyphs at high DPI.
+        ComPtr<ID2D1SvgElement> root;
+        document->GetRoot(&root);
+        const D2D1_SVG_LENGTH outputLength{
+            static_cast<float>(pixelSize), D2D1_SVG_LENGTH_UNITS_NUMBER};
+        if (!root || FAILED(root->SetAttributeValue(L"width", outputLength)) ||
+            FAILED(root->SetAttributeValue(L"height", outputLength))) {
             return nullptr;
         }
 
@@ -156,6 +169,38 @@ HBITMAP RenderSvgResource(HINSTANCE instance, int resourceId, int pixelSize) {
     const void* data = loaded ? LockResource(loaded) : nullptr;
     DWORD size = SizeofResource(instance, resource);
     return g_renderer.Render(data, size, pixelSize);
+}
+
+bool ValidateSvgResourceLayout(HINSTANCE instance, int resourceId, int pixelSize,
+                               bool requireCentered) {
+    HBITMAP bitmap = RenderSvgResource(instance, resourceId, pixelSize);
+    if (!bitmap) return false;
+    DIBSECTION section{};
+    bool valid = GetObjectW(bitmap, sizeof(section), &section) == sizeof(section) &&
+                 section.dsBm.bmBits && section.dsBm.bmBitsPixel == 32 &&
+                 section.dsBm.bmWidth == pixelSize && section.dsBm.bmHeight == pixelSize;
+    double mass = 0, weightedX = 0, weightedY = 0;
+    if (valid) {
+        const auto* pixels = static_cast<const BYTE*>(section.dsBm.bmBits);
+        for (int y = 0; y < pixelSize; ++y) {
+            for (int x = 0; x < pixelSize; ++x) {
+                BYTE alpha = pixels[y * section.dsBm.bmWidthBytes + x * 4 + 3];
+                if ((x == 0 || y == 0 || x == pixelSize - 1 || y == pixelSize - 1) && alpha > 8)
+                    valid = false; // A visible edge pixel signals viewport clipping.
+                mass += alpha;
+                weightedX += x * alpha;
+                weightedY += y * alpha;
+            }
+        }
+        valid = valid && mass > pixelSize * pixelSize * 255.0 * 0.04;
+        if (valid && requireCentered) {
+            double center = (pixelSize - 1) * 0.5;
+            valid = std::abs(weightedX / mass - center) < 0.45 &&
+                    std::abs(weightedY / mass - center) < 0.45;
+        }
+    }
+    DeleteObject(bitmap);
+    return valid;
 }
 
 } // namespace windowcue

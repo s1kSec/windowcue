@@ -81,7 +81,7 @@ END
         $compileArgs += @($tools.LibraryPaths | ForEach-Object { "/LIBPATH:$_" })
         $compileArgs += @('user32.lib', 'gdi32.lib', 'shell32.lib', 'shlwapi.lib', 'ole32.lib', 'dwmapi.lib',
             'd2d1.lib', 'd3d11.lib', 'dxgi.lib', 'msimg32.lib', 'uxtheme.lib',
-            'advapi32.lib', 'runtimeobject.lib', 'windowsapp.lib')
+            'advapi32.lib', 'runtimeobject.lib', 'windowsapp.lib', 'comctl32.lib')
         $previousPath = $env:PATH
         try {
             $env:PATH = (Split-Path -Parent $tools.Cl) + ';' + $previousPath
@@ -109,6 +109,7 @@ END
         'api-ms-win-core-largeinteger-l1-1-0.dll', 'api-ms-win-core-synch-l1-2-0.dll',
         'api-ms-win-core-processthreads-l1-1-1.dll', 'api-ms-win-core-psapi-l1-1-0.dll',
         'api-ms-win-core-string-l1-1-0.dll', 'api-ms-win-appmodel-runtime-l1-1-0.dll',
+        'api-ms-win-core-sysinfo-l1-1-0.dll',
         'api-ms-win-core-libraryloader-l1-2-1.dll', 'api-ms-win-core-rtlsupport-l1-1-0.dll',
         'api-ms-win-core-interlocked-l1-1-0.dll', 'api-ms-win-core-heap-l1-1-0.dll',
         'api-ms-win-core-console-l1-1-0.dll', 'api-ms-win-core-fibers-l1-1-0.dll',

@@ -1,5 +1,21 @@
 # WindowCue MSIX 实际验证记录
 
+## 2026-10-13：1.0.3.0 图标、DPI 与交互
+
+| 检查 | 结果 |
+| --- | --- |
+| 中文、英文便携版 | Release/x64 编译、三项原生自测、静默启动及重复启动检查均通过；解压 EXE 哈希一致 |
+| UI/DWM 回归 | `CN=0`、`EN=0`；包含提示文本/命中区域、减少动效、动画计时器收敛、字体 DPI 与原有预览/快捷键 |
+| 原生 SVG 像素 | `ICON_VISUAL_ERRORS=0`；18/23/27/36px 齿轮无裁切，重心误差 <0.005px，圆孔透明；GitHub 安全留白 |
+| 实际界面视觉 | 中英文均 `CAPTION_VISUAL=0`；真实 125% 桌面的明暗主题、半程/全程悬停、按压、设置打开与自然提示检查通过 |
+| 中文 Store MSIX | `1.0.3.0`、x64、正式 PFN、未签名；三项自测、默认启动清单、MakeAppx 完整验证、解包 EXE 哈希通过 |
+
+中文 MSIX 为 `output/s1ksec.WindowCue_1.0.3.0_x64_CN_Store.msix`，`395433` 字节，SHA256 `09E47ACCC8E19A0A8514F42C605771FCE3FEBF18E8D7FD37DCC10C081C6C6B03`。报告为同路径 `.report.json`，构建目录为 `artifacts/Store-CN-20261013-144141-ec7e6a8b/`。便携包与报告位于 `../dist/release/20261013-144140-a7bfee93/`，公开附件名称和校验值见 [Release 说明](../release/RELEASE-NOTES-1.0.3.0.md)。
+
+视觉产物：`../WindowCue.Native/artifacts/icon-visual/current/`；真实窗口中文、英文分别位于 `../WindowCue.Native/artifacts/caption-visual/20261013-144226-7ce96d56-CN/` 和 `20261013-144228-ec7887bd-EN/`。两语言视觉测试均未调用产品入口、枚举其他窗口、加载绑定或修改自启动；退出恢复光标和前台。96/144/192 DPI 截图是模拟布局，未完成真实混合多屏认证。
+
+未安装新版 MSIX、修改证书信任、执行真实注销/登录、Windows 10 实机或 WACK/Store 认证。以下历史记录保留。
+
 ## 2026-10-13：1.0.2.0 自启动与设置
 
 中文、英文最终原生 Release/x64 编译和桌面 UI/DWM 回归均通过（`CN=0`、`EN=0`）。新增检查覆盖齿轮在主题按钮左侧、常用 DPI 下命中、亮色底色 `#f5f8fc`、设置有效状态、键盘操作及快捷键录入；原有布局、DWM 和窗口切换回归保留。

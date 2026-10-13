@@ -93,7 +93,7 @@ function Build-NativeVariant {
         "/LIBPATH:$msvcLib", "/LIBPATH:$sdkUcrtLib", "/LIBPATH:$sdkUmLib",
         'user32.lib', 'gdi32.lib', 'shell32.lib', 'shlwapi.lib', 'ole32.lib', 'dwmapi.lib',
         'd2d1.lib', 'd3d11.lib', 'dxgi.lib', 'msimg32.lib', 'uxtheme.lib',
-        'advapi32.lib', 'runtimeobject.lib', 'windowsapp.lib'
+        'advapi32.lib', 'runtimeobject.lib', 'windowsapp.lib', 'comctl32.lib'
     )
     & $cl @compileArgs
     if ($LASTEXITCODE -ne 0) {

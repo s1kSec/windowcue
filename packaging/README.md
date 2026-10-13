@@ -2,9 +2,13 @@
 
 此目录为 `WindowCue.Native` 提供独立的命令行 MSIX 构建、检查与本地测试流程。中文和英文分别生成一个只含对应语言 EXE 的包，不合并为双语言程序或双入口包。中文沿用正式 Partner Center 身份；英文正式身份尚未提供，只能使用 LocalTest 身份做开发验证。
 
+## 2026-10-13：1.0.3.0 图标与交互
+
+当前版本为 `1.0.3.0`。中文正式身份与唯一的 `WindowCueStartup` 保持一致；本次更新原生 SVG 缩放、齿轮轮廓、标题栏交互和字体 DPI，不改变启动任务机制。便携 ZIP 与中文未签名 Store 提交包使用相同版本配置。实际检查结果见 [VALIDATION.md](VALIDATION.md)。
+
 ## 2026-10-13：1.0.2.0 默认自启动
 
-当前版本为 `1.0.2.0`。MSIX 清单声明唯一的 `WindowCueStartup`，默认 `Enabled="true"`；首次激活后由 Windows 启动任务机制生效。原生代码识别包身份，通过 WinRT StartupTask API 查询、启用或禁用，不把 WindowsApps 的版本化路径写入传统 Run 项。Windows 用户或策略禁用状态优先，设置开关不会覆盖，用户禁用时可打开系统启动设置。
+`1.0.2.0` 引入默认自启动。MSIX 清单声明唯一的 `WindowCueStartup`，默认 `Enabled="true"`；首次激活后由 Windows 启动任务机制生效。原生代码识别包身份，通过 WinRT StartupTask API 查询、启用或禁用，不把 WindowsApps 的版本化路径写入传统 Run 项。Windows 用户或策略禁用状态优先，设置开关不会覆盖，用户禁用时可打开系统启动设置。
 
 两种发行方式启动后均静默驻留托盘；按 `Alt+P` 或双击托盘打开。齿轮设置提供自启动开关和 GitHub 入口，亮色底色为 `#f5f8fc`。构建增加绑定、SVG、自启动三项原生自测，以及清单打包前/解包后的启动任务校验。自测通过 `WINDOWCUE_SETTINGS_DIR` 隔离设置和测试注册表；它验证便携后端，不等于已安装 MSIX 的 WinRT 后端已完成运行验证。
 

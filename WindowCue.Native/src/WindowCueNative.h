@@ -88,6 +88,8 @@ void InitializeStartupPreference();
 bool RunStartupSelfTests();
 
 HBITMAP RenderSvgResource(HINSTANCE instance, int resourceId, int pixelSize);
+bool ValidateSvgResourceLayout(HINSTANCE instance, int resourceId, int pixelSize,
+                               bool requireCentered);
 
 std::wstring FileNameFromPath(const std::wstring& path);
 std::wstring BuildHotkeyText(UINT modifiers, UINT virtualKey);

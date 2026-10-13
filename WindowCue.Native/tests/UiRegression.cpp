@@ -203,6 +203,49 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     UpdateWindow(host);
     UpdateThumbnails();
     check(g.windows[1].thumbnailVisible, 29);
+    // Tooltips remain native, localized, and aligned with the hit regions.
+    check(g.captionTooltips && SendMessageW(g.captionTooltips, TTM_GETTOOLCOUNT, 0, 0) == 2, 80);
+    if (g.captionTooltips) {
+        wchar_t tipText[256]{};
+        TOOLINFOW tip{sizeof(tip)};
+        tip.hwnd = host;
+        tip.uId = kSettingsTooltipId;
+        tip.lpszText = tipText;
+        check(SendMessageW(g.captionTooltips, TTM_GETTOOLINFOW, 0,
+                           reinterpret_cast<LPARAM>(&tip)) &&
+              SameRect(tip.rect, g.settingsButtonRect) &&
+              std::wstring(tipText) == T().settingsTooltip, 81);
+    }
+    // The hover path must invalidate only caption controls, and reduced motion
+    // must settle immediately without a running frame timer.
+    bool animationPolicy = g.captionAnimationsAllowed;
+    ResetCaptionInteraction();
+    ValidateRect(host, nullptr);
+    g.captionAnimationsAllowed = false;
+    SetCaptionHovered(true, true);
+    RECT captionUpdate{};
+    check(GetUpdateRect(host, &captionUpdate, FALSE) &&
+          SameRect(captionUpdate, g.settingsButtonRect), 82);
+    check(g.settingsHoverAnimation.value == 1.0 && !g.captionAnimationRunning, 83);
+    g.captionAnimationsAllowed = true;
+    SetCaptionHovered(true, false);
+    check(g.captionAnimationRunning && g.settingsHoverAnimation.target == 0.0, 84);
+    AdvanceCaptionHover(g.settingsHoverAnimation,
+                        g.settingsHoverAnimation.started + kCaptionHoverDuration);
+    SyncCaptionAnimationTimer();
+    check(g.settingsHoverAnimation.value == 0.0 && !g.captionAnimationRunning, 85);
+    ResetCaptionInteraction();
+    g.captionAnimationsAllowed = animationPolicy;
+    UINT captionDpi = g.dpi;
+    for (UINT dpi : {96u, 120u, 144u, 192u}) {
+        g.dpi = dpi;
+        CreateFonts();
+        LOGFONTW titleFont{};
+        check(GetObjectW(g.titleFont, sizeof(titleFont), &titleFont) &&
+              titleFont.lfHeight == -MulDiv(9, static_cast<int>(dpi), 72), 86);
+    }
+    g.dpi = captionDpi;
+    CreateFonts();
     // The gear opens an owned settings window. Native controls provide real
     // focus traversal; the rendered switch reflects effective Windows state.
     POINT gearPoint{g.settingsButtonRect.left + Scale(10), Scale(10)};
