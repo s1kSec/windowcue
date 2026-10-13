@@ -23,6 +23,10 @@ WindowCue 是 Windows 窗口快捷键工具：在实时预览列表中选择窗�
 
 Microsoft Store 渠道正在准备：中文正式身份 MSIX 已可构建，**尚未上架或通过商店认证**；英文独立商店产品仍待补齐官方身份。GitHub Release 可附带明确标注的中文未签名 Store 提交包，供开发者提交 Partner Center 使用；普通用户使用便携 ZIP。未签名 MSIX 不能直接作为用户安装包，本地测试签名包和证书不随 Release 发布。
 
+## 2026-10-13：1.0.4.0 紧凑设置
+
+设置收紧为一行开机自启动与小尺寸无文字开关，以及独立的 GitHub 图标入口；移除静默驻留说明、普通开启/关闭文字和 GitHub 文字按钮。GitHub 图标点击打开项目仓库，Windows 禁用或操作异常时仍提供必要提示。默认自启动、静默托盘和两种发行方式的启动机制延续既有行为。
+
 ## 2026-10-13：1.0.3.0 图标与交互修正
 
 重画原创六齿圆角设置图标，并修正原生 SVG 渲染器未缩放固定根尺寸的问题：18 像素图标不再被裁切，100%–200% DPI 下保持正确比例。同步调整月亮的光学居中和 GitHub 图标留白。
@@ -69,7 +73,7 @@ Microsoft Store 渠道正在准备：中文正式身份 MSIX 已可构建，**�
 & .\packaging\Build-Msix.ps1 -Language CN -Mode Store -RunSelfTests
 ```
 
-原生 EXE 输出到 `dist\WindowCue.Native\`；便携 ZIP、校验值和构建报告输出到 `dist\release\<运行标识>\`；MSIX 输出到 `packaging\output\`。当前源码及打包版本为 `1.0.3.0`，便携构建和 MSIX 构建共用 `packaging/partner-center.json` 的版本配置。MSIX 打包说明、身份配置、隔离测试及认证边界见 [packaging/README.md](packaging/README.md)。原生实现及回归程序构建见 [WindowCue.Native/README.md](WindowCue.Native/README.md)。
+原生 EXE 输出到 `dist\WindowCue.Native\`；便携 ZIP、校验值和构建报告输出到 `dist\release\<运行标识>\`；MSIX 输出到 `packaging\output\`。当前源码及打包版本为 `1.0.4.0`，便携构建和 MSIX 构建共用 `packaging/partner-center.json` 的版本配置。MSIX 打包说明、身份配置、隔离测试及认证边界见 [packaging/README.md](packaging/README.md)。原生实现及回归程序构建见 [WindowCue.Native/README.md](WindowCue.Native/README.md)。
 
 ## 仓库与反馈
 

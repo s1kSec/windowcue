@@ -29,6 +29,8 @@ constexpr wchar_t kSettingsClass[] = L"WindowCue.Native.Settings";
 constexpr wchar_t kGitHubUrl[] = L"https://github.com/s1kSec/windowcue";
 constexpr int kStartupButtonId = 301;
 constexpr int kGitHubButtonId = 302;
+constexpr int kSettingsWidth = 300;
+constexpr int kSettingsHeight = 106;
 constexpr UINT_PTR kTrayRetryTimer = 3;
 constexpr UINT_PTR kCaptionAnimationTimer = 4;
 constexpr ULONGLONG kCaptionHoverDuration = 125;
@@ -90,15 +92,12 @@ struct Texts {
     const wchar_t* noWindows;
     const wchar_t* settings;
     const wchar_t* startup;
-    const wchar_t* startupOn;
-    const wchar_t* startupOff;
     const wchar_t* startupWindowsDisabled;
     const wchar_t* startupPolicyDisabled;
     const wchar_t* startupUnavailable;
     const wchar_t* startupEnable;
     const wchar_t* startupDisable;
     const wchar_t* startupWindowsSettings;
-    const wchar_t* startupHint;
     const wchar_t* github;
     const wchar_t* linkError;
     const wchar_t* settingsTooltip;
@@ -112,10 +111,10 @@ const Texts& T() {
         L"Select a window first", L"Bind", L"Unbind", L"Open settings", L"Exit",
         L"Click and press a shortcut", L"Use Ctrl / Alt / Shift / Win",
         L"Record a shortcut with a modifier first", L" is already used by another app",
-        L"No user windows found", L"Settings", L"Start with Windows", L"On", L"Off",
+        L"No user windows found", L"Settings", L"Start with Windows",
         L"Disabled in Windows startup settings", L"Disabled by Windows policy",
         L"Startup is unavailable", L"Enable start with Windows", L"Disable start with Windows",
-        L"Open Windows startup settings", L"WindowCue starts quietly in the system tray.",
+        L"Open Windows startup settings",
         L"GitHub project", L"Could not open the link. Check your default browser.",
         L"Settings (Ctrl+,)", L"Switch to light mode", L"Switch to dark mode"};
 #else
@@ -123,10 +122,10 @@ const Texts& T() {
         L"请先选择一个窗口", L"绑定", L"取消绑定", L"打开设置", L"退出",
         L"点击后按快捷键", L"请同时使用 Ctrl / Alt / Shift / Win",
         L"请先录入包含修饰键的快捷键", L" 已被其他程序占用",
-        L"没有找到用户窗口", L"设置", L"开机自启动", L"开启", L"关闭",
+        L"没有找到用户窗口", L"设置", L"开机自启动",
         L"已在 Windows 启动设置中禁用", L"已被 Windows 策略禁用",
         L"开机自启动不可用", L"开启开机自启动", L"关闭开机自启动",
-        L"打开 Windows 启动设置", L"WindowCue 启动后静默驻留系统托盘。",
+        L"打开 Windows 启动设置",
         L"GitHub 项目", L"无法打开链接，请检查默认浏览器设置。",
         L"设置（Ctrl+,）", L"切换到亮色模式", L"切换到暗夜模式"};
 #endif
@@ -154,7 +153,6 @@ struct AppState {
     HWND githubButton{};
     HWND startupLabel{};
     HWND startupStatusLabel{};
-    HWND startupHintLabel{};
     HFONT settingsFont{};
     HBRUSH settingsBackgroundBrush{};
     HBITMAP githubDarkIcon{};
@@ -163,6 +161,7 @@ struct AppState {
     UINT taskbarCreatedMessage{};
     int trayRetries{};
     StartupStatus startupStatus;
+    std::wstring settingsMessage;
     NOTIFYICONDATAW tray{};
     HFONT titleFont{};
     HFONT bodyFont{};
@@ -221,6 +220,7 @@ AppState g;
 
 void HideSettingsWindow();
 void ShowSettingsWindow();
+void LayoutSettingsControls();
 
 std::wstring CurrentExecutablePath() {
     wchar_t path[32768]{};
@@ -1658,8 +1658,8 @@ int SettingsScale(int value) {
 
 const wchar_t* StartupStateText(StartupState state) {
     switch (state) {
-    case StartupState::Enabled: return T().startupOn;
-    case StartupState::Disabled: return T().startupOff;
+    case StartupState::Enabled:
+    case StartupState::Disabled: return L"";
     case StartupState::DisabledByUser: return T().startupWindowsDisabled;
     case StartupState::DisabledByPolicy: return T().startupPolicyDisabled;
     default: return T().startupUnavailable;
@@ -1676,9 +1676,12 @@ void UpdateStartupControls() {
     SetWindowTextW(g.startupButton, windowsDisabled ? T().startupWindowsSettings :
                    (enabled ? T().startupDisable : T().startupEnable));
     EnableWindow(g.startupButton, canChange ? TRUE : FALSE);
-    std::wstring status = StartupStateText(g.startupStatus.state);
-    if (!g.startupStatus.detail.empty()) status += L"\r\n" + g.startupStatus.detail;
-    SetWindowTextW(g.startupStatusLabel, status.c_str());
+    g.settingsMessage = StartupStateText(g.startupStatus.state);
+    if (!g.settingsMessage.empty() && !g.startupStatus.detail.empty())
+        g.settingsMessage += L"\r\n" + g.startupStatus.detail;
+    SetWindowTextW(g.startupStatusLabel, g.settingsMessage.c_str());
+    ShowWindow(g.startupStatusLabel, g.settingsMessage.empty() ? SW_HIDE : SW_SHOWNA);
+    LayoutSettingsControls();
     InvalidateRect(g.startupButton, nullptr, FALSE);
 }
 
@@ -1697,10 +1700,10 @@ void RefreshSettingsResources() {
         OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY,
         VARIABLE_PITCH | FF_SWISS, L"Microsoft YaHei UI");
     g.settingsBackgroundBrush = CreateSolidBrush(P().windowBackground);
-    g.githubDarkIcon = RenderSvgResource(g.instance, IDR_GITHUB_DARK_SVG, SettingsScale(22));
-    g.githubLightIcon = RenderSvgResource(g.instance, IDR_GITHUB_LIGHT_SVG, SettingsScale(22));
+    g.githubDarkIcon = RenderSvgResource(g.instance, IDR_GITHUB_DARK_SVG, SettingsScale(20));
+    g.githubLightIcon = RenderSvgResource(g.instance, IDR_GITHUB_LIGHT_SVG, SettingsScale(20));
     for (HWND control : {g.startupButton, g.githubButton, g.startupLabel,
-                          g.startupStatusLabel, g.startupHintLabel}) {
+                          g.startupStatusLabel}) {
         if (control) SendMessageW(control, WM_SETFONT,
                                   reinterpret_cast<WPARAM>(g.settingsFont), TRUE);
     }
@@ -1725,15 +1728,39 @@ void LayoutSettingsControls() {
     if (!g.settingsWindow) return;
     RECT client{};
     GetClientRect(g.settingsWindow, &client);
-    int margin = SettingsScale(20);
+    int margin = SettingsScale(18);
     int width = RectWidth(client) - margin * 2;
-    MoveWindow(g.startupLabel, margin, SettingsScale(22), width - SettingsScale(112),
-               SettingsScale(28), TRUE);
-    MoveWindow(g.startupButton, client.right - margin - SettingsScale(96), SettingsScale(16),
-               SettingsScale(96), SettingsScale(36), TRUE);
-    MoveWindow(g.startupStatusLabel, margin, SettingsScale(64), width, SettingsScale(70), TRUE);
-    MoveWindow(g.startupHintLabel, margin, SettingsScale(142), width, SettingsScale(32), TRUE);
-    MoveWindow(g.githubButton, margin, SettingsScale(184), width, SettingsScale(40), TRUE);
+    MoveWindow(g.startupLabel, margin, SettingsScale(18), width - SettingsScale(52),
+               SettingsScale(24), TRUE);
+    MoveWindow(g.startupButton, client.right - margin - SettingsScale(36), SettingsScale(20),
+               SettingsScale(36), SettingsScale(20), TRUE);
+    int footerTop = SettingsScale(60);
+    if (!g.settingsMessage.empty()) {
+        // Only Windows restrictions and action failures need an explanation.
+        // Measure it at the current DPI so it never consumes space when empty.
+        RECT textBounds = MakeRect(0, 0, width, 0);
+        HDC dc = GetDC(g.settingsWindow);
+        HGDIOBJ old = SelectObject(dc, g.settingsFont);
+        DrawTextW(dc, g.settingsMessage.c_str(), -1, &textBounds,
+                  DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+        SelectObject(dc, old);
+        ReleaseDC(g.settingsWindow, dc);
+        int height = std::max(SettingsScale(20), RectHeight(textBounds));
+        MoveWindow(g.startupStatusLabel, margin, SettingsScale(52), width, height, TRUE);
+        footerTop = SettingsScale(52) + height + SettingsScale(12);
+    }
+    // Align the icon and switch optically; the GitHub hit target stays generous
+    // while its visible surface has no text, tile, or border.
+    MoveWindow(g.githubButton, client.right - margin - SettingsScale(34), footerTop,
+               SettingsScale(32), SettingsScale(32), TRUE);
+    int height = footerTop + SettingsScale(32) + SettingsScale(14);
+    if (RectHeight(client) != height) {
+        RECT bounds{};
+        GetWindowRect(g.settingsWindow, &bounds);
+        SetWindowPos(g.settingsWindow, nullptr, 0, 0, RectWidth(bounds),
+            RectHeight(bounds) + height - RectHeight(client),
+            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
 }
 
 void HideSettingsWindow() {
@@ -1747,7 +1774,10 @@ void OpenSettingsLink(const wchar_t* link) {
     HINSTANCE result = ShellExecuteW(g.settingsWindow, L"open", link,
                                      nullptr, nullptr, SW_SHOWNORMAL);
     if (reinterpret_cast<INT_PTR>(result) <= 32) {
-        SetWindowTextW(g.startupStatusLabel, T().linkError);
+        g.settingsMessage = T().linkError;
+        SetWindowTextW(g.startupStatusLabel, g.settingsMessage.c_str());
+        ShowWindow(g.startupStatusLabel, SW_SHOWNA);
+        LayoutSettingsControls();
     }
 }
 
@@ -1773,40 +1803,26 @@ void DrawSettingsButton(const DRAWITEMSTRUCT& item) {
     if (item.CtlID == kStartupButtonId) {
         bool on = g.startupStatus.state == StartupState::Enabled;
         COLORREF fill = on ? RGB(15, 122, 96) : P().disabledButton;
-        FillRounded(item.hDC, rect, SettingsScale(32), fill);
-        StrokeRounded(item.hDC, rect, SettingsScale(32), SettingsScale(1),
+        if (pressed && enabled) fill = BlendCaptionColor(fill, P().mainText, 0.12);
+        FillRounded(item.hDC, rect, SettingsScale(20), fill);
+        StrokeRounded(item.hDC, rect, SettingsScale(20), SettingsScale(1),
                        enabled ? P().hoverBorder : P().disabledButtonBorder);
-        int knob = SettingsScale(24);
-        int left = on ? rect.right - SettingsScale(6) - knob : rect.left + SettingsScale(6);
+        int knob = SettingsScale(14);
+        int left = on ? rect.right - SettingsScale(3) - knob : rect.left + SettingsScale(3);
         int top = rect.top + (RectHeight(rect) - knob) / 2;
         RECT knobRect = MakeRect(left, top, left + knob, top + knob);
         FillRounded(item.hDC, knobRect, knob, on ? RGB(245, 248, 252) : P().mutedText);
-        RECT label = rect;
-        if (on) label.right = knobRect.left;
-        else label.left = knobRect.right;
-        DrawTextValue(item.hDC, on ? T().startupOn : T().startupOff, label,
-                      g.settingsFont, on ? RGB(245, 248, 252) :
-                      (enabled ? P().mainText : P().disabledText),
-                      DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     } else {
-        FillRounded(item.hDC, rect, SettingsScale(8), pressed ? P().themePressed : P().panelBackground);
-        StrokeRounded(item.hDC, rect, SettingsScale(8), SettingsScale(1), P().panelBorder);
-        RECT iconRect = MakeRect(rect.left + SettingsScale(12), rect.top,
-                                 rect.left + SettingsScale(40), rect.bottom);
         HBITMAP icon = g.darkMode ? g.githubDarkIcon : g.githubLightIcon;
-        DrawSvgBitmap(item.hDC, icon, iconRect);
-        RECT label = rect;
-        label.left += SettingsScale(48);
-        DrawTextValue(item.hDC, T().github, label, g.settingsFont, P().mainText,
-                      DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        DrawSvgBitmap(item.hDC, icon, rect, pressed ? SettingsScale(1) : 0);
     }
-    if (item.itemState & ODS_FOCUS) {
+    if ((item.itemState & ODS_FOCUS) && !(item.itemState & ODS_NOFOCUSRECT)) {
         RECT focus = rect;
         InflateRect(&focus, -SettingsScale(2), -SettingsScale(2));
         bool switchOn = item.CtlID == kStartupButtonId &&
                         g.startupStatus.state == StartupState::Enabled;
         StrokeRounded(item.hDC, focus,
-            item.CtlID == kStartupButtonId ? SettingsScale(30) : SettingsScale(6),
+            item.CtlID == kStartupButtonId ? SettingsScale(16) : SettingsScale(6),
             SettingsScale(1), switchOn ? RGB(245, 248, 252) : P().selectedBorder);
     }
 }
@@ -1816,12 +1832,10 @@ LRESULT CALLBACK SettingsProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARA
     case WM_CREATE:
         g.settingsWindow = hwnd;
         g.settingsDpi = QueryWindowDpi(hwnd);
-        g.startupLabel = CreateWindowW(L"STATIC", T().startup, WS_CHILD | WS_VISIBLE,
+        g.startupLabel = CreateWindowW(L"STATIC", T().startup, WS_CHILD | WS_VISIBLE | SS_CENTERIMAGE,
             0, 0, 0, 0, hwnd, nullptr, g.instance, nullptr);
         g.startupStatusLabel = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_NOPREFIX,
             0, 0, 0, 0, hwnd, nullptr, g.instance, nullptr);
-        g.startupHintLabel = CreateWindowW(L"STATIC", T().startupHint,
-            WS_CHILD | WS_VISIBLE | SS_NOPREFIX, 0, 0, 0, 0, hwnd, nullptr, g.instance, nullptr);
         g.startupButton = CreateWindowW(L"BUTTON", T().startup,
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
             0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStartupButtonId)),
@@ -1856,6 +1870,12 @@ LRESULT CALLBACK SettingsProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARA
             else if (LOWORD(wParam) == kGitHubButtonId) OpenSettingsLink(kGitHubUrl);
         }
         return 0;
+    case WM_SETCURSOR:
+        if (reinterpret_cast<HWND>(wParam) == g.githubButton && LOWORD(lParam) == HTCLIENT) {
+            SetCursor(LoadCursorW(nullptr, IDC_HAND));
+            return TRUE;
+        }
+        break;
     case WM_DRAWITEM:
         DrawSettingsButton(*reinterpret_cast<DRAWITEMSTRUCT*>(lParam));
         return TRUE;
@@ -1892,7 +1912,8 @@ LRESULT CALLBACK SettingsProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARA
         g.settingsBackgroundBrush = nullptr;
         g.githubDarkIcon = g.githubLightIcon = nullptr;
         g.settingsWindow = g.startupButton = g.githubButton = nullptr;
-        g.startupLabel = g.startupStatusLabel = g.startupHintLabel = nullptr;
+        g.startupLabel = g.startupStatusLabel = nullptr;
+        g.settingsMessage.clear();
         return 0;
     }
     return DefWindowProcW(hwnd, message, wParam, lParam);
@@ -1908,7 +1929,7 @@ void ShowSettingsWindow() {
         wc.lpszClassName = kSettingsClass;
         wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         RegisterClassW(&wc);
-        RECT size = MakeRect(0, 0, Scale(410), Scale(240));
+        RECT size = MakeRect(0, 0, Scale(kSettingsWidth), Scale(kSettingsHeight));
         constexpr DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU;
         using AdjustForDpi = BOOL(WINAPI*)(LPRECT, DWORD, BOOL, DWORD, UINT);
         auto adjust = reinterpret_cast<AdjustForDpi>(GetProcAddress(

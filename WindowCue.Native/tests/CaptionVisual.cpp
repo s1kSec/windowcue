@@ -254,6 +254,7 @@ int wmain(int argc, wchar_t** argv) {
         if (!WritePng(factory.Get(), output / name, pixels) && !failure) failure = 96;
     };
     std::vector<Pixels> captionRows;
+    std::vector<Pixels> settingsRows;
     if (host) {
         // No application timers are registered because the normal entry is bypassed.
         ShowWindow(host, SW_SHOWNOACTIVATE);
@@ -311,8 +312,41 @@ int wmain(int argc, wchar_t** argv) {
             Pixels settings = CaptureOwnedWindow(g.settingsWindow, report);
             save(dark ? L"dark-settings.png" : L"light-settings.png", settings);
             save(dark ? L"dark-review.png" : L"light-review.png", Stack({main, settings}));
+            settingsRows.push_back(settings);
+            RECT compactClient{};
+            GetClientRect(g.settingsWindow, &compactClient);
+            report << (dark ? "dark" : "light") << " settings_client="
+                << RectWidth(compactClient) << 'x' << RectHeight(compactClient)
+                << " status_visible=" << IsWindowVisible(g.startupStatusLabel) << '\n';
+            if ((RectWidth(compactClient) > SettingsScale(320) ||
+                 RectHeight(compactClient) > SettingsScale(120) ||
+                 IsWindowVisible(g.startupStatusLabel)) && !failure) failure = 100;
+            // Show both switch positions without clicking the production
+            // control, then the Windows-managed disabled explanation. These
+            // states exercise only the mock query and owned settings surface.
+            for (StartupState state : {StartupState::Disabled, StartupState::DisabledByUser}) {
+                visualStartupStatus.state = state;
+                RefreshStartupControls();
+                Pump(50);
+                Pixels sample = CaptureOwnedWindow(g.settingsWindow, report);
+                bool blocked = state == StartupState::DisabledByUser;
+                save(dark ? (blocked ? L"dark-settings-windows-disabled.png" : L"dark-settings-off.png") :
+                     (blocked ? L"light-settings-windows-disabled.png" : L"light-settings-off.png"), sample);
+                settingsRows.push_back(sample);
+                RECT stateClient{};
+                GetClientRect(g.settingsWindow, &stateClient);
+                report << (dark ? "dark" : "light") << " settings_blocked=" << blocked
+                    << " client=" << RectWidth(stateClient) << 'x' << RectHeight(stateClient)
+                    << " status_visible=" << IsWindowVisible(g.startupStatusLabel) << '\n';
+                if ((static_cast<bool>(IsWindowVisible(g.startupStatusLabel)) != blocked ||
+                     (blocked && RectHeight(stateClient) <= RectHeight(compactClient))) && !failure)
+                    failure = 101;
+            }
+            visualStartupStatus.state = StartupState::Enabled;
+            RefreshStartupControls();
             HideSettingsWindow();
         }
+        save(L"settings-states.png", Stack(settingsRows));
         // Verify the actual registered tooltip labels and tool hit rectangles.
         report << "tooltip_tools=" << SendMessageW(g.captionTooltips, TTM_GETTOOLCOUNT, 0, 0) << '\n';
         for (UINT_PTR id : {kSettingsTooltipId, kThemeTooltipId}) {

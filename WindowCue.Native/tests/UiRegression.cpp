@@ -255,11 +255,29 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
           GetWindow(g.settingsWindow, GW_OWNER) == host, 62);
     check(g.settingsDarkIcon && g.settingsLightIcon && g.githubDarkIcon && g.githubLightIcon, 63);
     if (g.settingsWindow) {
+        RECT compactClient{}, switchBounds{}, githubBounds{};
+        GetClientRect(g.settingsWindow, &compactClient);
+        GetWindowRect(g.startupButton, &switchBounds);
+        GetWindowRect(g.githubButton, &githubBounds);
+        check(RectWidth(compactClient) <= SettingsScale(320) &&
+              RectHeight(compactClient) <= SettingsScale(120), 100);
+        check(RectWidth(switchBounds) == SettingsScale(36) &&
+              RectHeight(switchBounds) == SettingsScale(20), 101);
+        check(RectWidth(githubBounds) == SettingsScale(32) &&
+              RectHeight(githubBounds) == SettingsScale(32), 102);
+        check(!IsWindowVisible(g.startupStatusLabel), 103);
+        // The explanatory tray hint was removed. Only the title, optional
+        // Windows status, startup switch and GitHub icon remain as controls.
+        int childCount = 0;
+        for (HWND child = GetWindow(g.settingsWindow, GW_CHILD); child;
+             child = GetWindow(child, GW_HWNDNEXT)) ++childCount;
+        check(childCount == 4, 104);
         wchar_t buttonText[256]{};
         GetWindowTextW(g.startupButton, buttonText, static_cast<int>(std::size(buttonText)));
         check(std::wstring(buttonText) == T().startupEnable && IsWindowEnabled(g.startupButton), 64);
         SendMessageW(g.startupButton, BM_CLICK, 0, 0);
-        check(regressionStartupChanges == 1 && g.startupStatus.state == StartupState::Enabled, 65);
+        check(regressionStartupChanges == 1 && g.startupStatus.state == StartupState::Enabled &&
+              !IsWindowVisible(g.startupStatusLabel), 65);
         GetWindowTextW(g.startupButton, buttonText, static_cast<int>(std::size(buttonText)));
         check(std::wstring(buttonText) == T().startupDisable, 66);
         MSG enter{};
@@ -268,7 +286,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         enter.wParam = VK_RETURN;
         SetFocus(g.startupButton);
         check(HandleSettingsMessage(enter) && regressionStartupChanges == 2 &&
-              g.startupStatus.state == StartupState::Disabled, 67);
+              g.startupStatus.state == StartupState::Disabled &&
+              !IsWindowVisible(g.startupStatusLabel), 67);
         for (StartupState state : {StartupState::DisabledByUser, StartupState::DisabledByPolicy,
                                     StartupState::Unavailable}) {
             regressionStartupStatus.state = state;
@@ -281,9 +300,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             wchar_t statusText[512]{};
             GetWindowTextW(g.startupStatusLabel, statusText, static_cast<int>(std::size(statusText)));
             check(std::wstring(statusText).find(StartupStateText(state)) == 0, 70);
+            RECT warningClient{};
+            GetClientRect(g.settingsWindow, &warningClient);
+            check(IsWindowVisible(g.startupStatusLabel) &&
+                  RectHeight(warningClient) > RectHeight(compactClient) &&
+                  RectWidth(warningClient) == RectWidth(compactClient), 105);
         }
         regressionStartupStatus.state = StartupState::Disabled;
         RefreshStartupControls();
+        RECT restoredClient{};
+        GetClientRect(g.settingsWindow, &restoredClient);
+        check(!IsWindowVisible(g.startupStatusLabel) &&
+              SameRect(restoredClient, compactClient), 106);
         MSG tab{};
         tab.hwnd = g.startupButton;
         tab.message = WM_KEYDOWN;
@@ -308,12 +336,50 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         SendMessageW(host, WM_KEYDOWN, VK_OEM_COMMA, 0);
         SetKeyboardState(originalKeys);
         check(IsWindowVisible(g.settingsWindow), 73);
+        // Owner-drawn accessibility labels must not turn into a visible GitHub
+        // text tile. Inspect the real drawing path in both themes, including
+        // the pressed state: its entire outer band stays the parent color.
+        auto iconOnlyGitHub = [&](bool pressed) {
+            const int size = SettingsScale(32);
+            HDC windowDc = GetDC(g.settingsWindow);
+            HDC dc = CreateCompatibleDC(nullptr);
+            HBITMAP bitmap = windowDc ? CreateCompatibleBitmap(windowDc, size, size) : nullptr;
+            if (windowDc) ReleaseDC(g.settingsWindow, windowDc);
+            if (!dc || !bitmap) {
+                if (bitmap) DeleteObject(bitmap);
+                if (dc) DeleteDC(dc);
+                return false;
+            }
+            HGDIOBJ previous = SelectObject(dc, bitmap);
+            DRAWITEMSTRUCT item{};
+            item.CtlID = kGitHubButtonId;
+            item.hDC = dc;
+            item.rcItem = MakeRect(0, 0, size, size);
+            item.itemState = pressed ? ODS_SELECTED : 0;
+            DrawSettingsButton(item);
+            bool cleanBand = true, hasIcon = false;
+            const int inset = SettingsScale(4);
+            for (int y = 0; y < size; ++y) {
+                for (int x = 0; x < size; ++x) {
+                    COLORREF pixel = GetPixel(dc, x, y);
+                    bool outside = x < inset || y < inset ||
+                                   x >= size - inset || y >= size - inset;
+                    if (outside && pixel != P().windowBackground) cleanBand = false;
+                    if (!outside && pixel != P().windowBackground) hasIcon = true;
+                }
+            }
+            SelectObject(dc, previous);
+            DeleteObject(bitmap);
+            DeleteDC(dc);
+            return cleanBand && hasIcon;
+        };
         for (bool dark : {false, true}) {
             g.darkMode = dark;
             ApplySettingsTheme();
             LOGBRUSH brush{};
             check(GetObjectW(g.settingsBackgroundBrush, sizeof(brush), &brush) != 0 &&
                   brush.lbColor == P().windowBackground, 74);
+            check(iconOnlyGitHub(false) && iconOnlyGitHub(true), 107);
             UpdateWindow(g.settingsWindow);
         }
         HideSettingsWindow();

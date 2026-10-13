@@ -1,5 +1,24 @@
 # WindowCue MSIX 实际验证记录
 
+## 2026-10-13：1.0.4.0 紧凑设置
+
+| 检查 | 结果 |
+| --- | --- |
+| 中文、英文便携版 | Release/x64 编译，绑定/SVG/自启动自测，静默启动、消息响应及重复启动检查均通过；解压 EXE 哈希一致，仅依赖 Windows 系统 DLL/API-set |
+| UI/DWM 回归 | `CN=0`、`EN=0`；覆盖紧凑设置、无文字开关、Windows 禁用状态及原有预览/快捷键路径 |
+| 实际设置视觉 | 两语言均 `exit_code=0`；真实 `120 DPI` 桌面，明暗主题下开启、关闭及 Windows 禁用三态通过，普通客户区 `375×133px`、禁用提示时 `375×163px` |
+| 图标与键盘 | GitHub 纯图标外围像素、透明点击区域及 Tab/Enter/Escape 断言通过；`mock_startup_changes=0` |
+| 中文 Store MSIX | `1.0.4.0`、x64、正式 PFN `s1ksec.WindowCue_14ska59yrcwza`、未签名；三项自测与默认启用 StartupTask 清单通过 |
+| 包完整性 | MakeAppx 完整验证（未用 `/nv`）、解包 EXE 哈希一致；启动清单在打包前及解包后均通过 |
+
+便携包与 `report.json` 位于 `../dist/release/20261013-152100-d5e99a80/`。中文 ZIP 为 `317826` 字节，SHA256 `71FCA73989F216A14A01D8DC246C91F484FB1BDF3010C03DBA7A1F153394416C`；英文 ZIP 为 `317769` 字节，SHA256 `581C772F31DB2389792017ABC4AB3F91ED0CD16A255570C618A68D641BAE8E85`。
+
+中文 MSIX 位于 `output/s1ksec.WindowCue_1.0.4.0_x64_CN_Store.msix`，`395418` 字节，SHA256 `634BF6881EFD6BA6ED85B4EB1D2C48380CF99D0C17EB97B7E37D83505ADC2A9E`。报告为同路径 `.report.json`，构建目录为 `artifacts/Store-CN-20261013-152057-167901c5/`。发布附件名称及校验值见 [1.0.4.0 Release 说明](../release/RELEASE-NOTES-1.0.4.0.md)。该未签名 MSIX 仅供开发者提交 Partner Center，不能直接安装，也不代表商店认证。
+
+真实窗口视觉日志分别位于 `../WindowCue.Native/artifacts/caption-visual/20261013-152134-6464bd15-CN/caption-report.txt` 与 `../WindowCue.Native/artifacts/caption-visual/20261013-152134-73bced52-EN/caption-report.txt`。视觉测试使用生产界面代码及模拟自启动 API，只采集专用窗口；未调用产品入口、枚举用户窗口、加载设置、注册托盘或快捷键。96/144/192 DPI 仅为主窗口布局模拟，未完成设置窗口跨真实显示器或混合多屏验证。
+
+已安装新版 MSIX 的 WinRT 启动开关、真实注销/登录、Windows 10 实机及 WACK/Store 认证尚未验证。便携烟测未自动操作托盘菜单退出。以下历史记录保留。
+
 ## 2026-10-13：1.0.3.0 图标、DPI 与交互
 
 | 检查 | 结果 |
