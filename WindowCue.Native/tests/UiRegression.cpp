@@ -53,7 +53,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     wc.lpszClassName = kWindowClass;
     if (!RegisterClassW(&wc)) return 91;
     HWND host = CreateWindowExW(WS_EX_TOOLWINDOW, kWindowClass, L"WindowCue regression",
-        WS_POPUP | WS_CAPTION, -32000, -32000, 1080, 610,
+        kMainWindowStyle, -32000, -32000, 1080, 610,
         nullptr, nullptr, instance, nullptr);
     HWND source = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"Preview source",
         WS_POPUP, -32000, -32000, 640, 480,

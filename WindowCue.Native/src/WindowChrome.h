@@ -4,11 +4,18 @@ namespace windowcue {
 struct ChromeStatus { HRESULT extension{S_OK}, decoration{S_OK}; };
 inline ChromeStatus ConfigureOpaqueChrome(HWND hwnd) {
     MARGINS margins{};
-    DWMNCRENDERINGPOLICY policy=DWMNCRP_DISABLED;
+    // Disabling DWM does not disable User32's classic nonclient painter. Keep
+    // composition enabled; NCCALCSIZE gives this window one full client area.
+    DWMNCRENDERINGPOLICY policy=DWMNCRP_ENABLED;
     ChromeStatus result{DwmExtendFrameIntoClientArea(hwnd,&margins),
         DwmSetWindowAttribute(hwnd,DWMWA_NCRENDERING_POLICY,&policy,sizeof(policy))};
     if(FAILED(result.extension) || FAILED(result.decoration))
         OutputDebugStringW(L"WindowCue: optional DWM decoration unavailable; client chrome remains opaque.\n");
+    // Windows 11's compositor border is separate from the client frame. Older
+    // Windows versions reject this optional attribute; geometry never relies on it.
+    constexpr auto borderColor=static_cast<DWMWINDOWATTRIBUTE>(34); // DWMWA_BORDER_COLOR
+    constexpr COLORREF noBorder=0xFFFFFFFE; // DWMWA_COLOR_NONE
+    DwmSetWindowAttribute(hwnd,borderColor,&noBorder,sizeof(noBorder));
     return result;
 }
 inline LRESULT ResizeBorderHit(HWND hwnd,UINT dpi,POINT p) {

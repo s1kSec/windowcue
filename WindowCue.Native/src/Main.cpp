@@ -39,7 +39,9 @@ constexpr ULONGLONG kCaptionHoverDuration = 125;
 constexpr UINT_PTR kSettingsTooltipId = 1;
 constexpr UINT_PTR kThemeTooltipId = 2;
 constexpr int kNormalWindowWidth = 1080;
-constexpr DWORD kMainWindowStyle=WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX|WS_MAXIMIZEBOX|WS_THICKFRAME;
+// There is no system caption to hide or paint over. Keep only the behaviors
+// needed by native resizing, system commands and Windows snap layouts.
+constexpr DWORD kMainWindowStyle=WS_POPUP|WS_SYSMENU|WS_MINIMIZEBOX|WS_MAXIMIZEBOX|WS_THICKFRAME;
 
 
 struct Texts {
@@ -1471,9 +1473,12 @@ LRESULT CALLBACK SettingsButtonProcedure(HWND hwnd, UINT message, WPARAM wp, LPA
 LRESULT CALLBACK SettingsProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
     case WM_NCCALCSIZE:
-        if(wParam) return 0;
-        break;
+        // Both the initial RECT and subsequent NCCALCSIZE_PARAMS retain the
+        // complete window bounds. Never let User32 reintroduce a frame inset.
+        return 0;
     case WM_NCPAINT: return 0;
+    case WM_NCACTIVATE:
+        return DefWindowProcW(hwnd,message,wParam,-1);
     case WM_NCHITTEST: {
         POINT p{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};ScreenToClient(hwnd,&p);
         RECT r{};GetClientRect(hwnd,&r);
@@ -1706,8 +1711,7 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
     case WM_NCACTIVATE:
         return DefWindowProcW(hwnd,message,wParam,-1);
     case WM_NCCALCSIZE:
-        if (wParam) return 0;
-        break;
+        return 0;
     case WM_NCHITTEST: {
         POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         return HitTest(point);
