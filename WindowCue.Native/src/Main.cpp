@@ -1,9 +1,12 @@
 #include "WindowCueNative.h"
+#include "RenderContext.h"
+#include "Theme.h"
+#include "Automation.h"
+#include "WindowChrome.h"
 #include "../resource.h"
 
 #include <objbase.h>
 #include <commctrl.h>
-#include <uxtheme.h>
 #include <windowsx.h>
 
 #include <algorithm>
@@ -17,8 +20,6 @@
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "user32.lib")
-#pragma comment(lib, "msimg32.lib")
-#pragma comment(lib, "uxtheme.lib")
 #pragma comment(lib, "comctl32.lib")
 
 namespace windowcue {
@@ -33,51 +34,13 @@ constexpr int kSettingsWidth = 300;
 constexpr int kSettingsHeight = 106;
 constexpr UINT_PTR kTrayRetryTimer = 3;
 constexpr UINT_PTR kCaptionAnimationTimer = 4;
+constexpr UINT_PTR kRenderRetryTimer = 5;
 constexpr ULONGLONG kCaptionHoverDuration = 125;
 constexpr UINT_PTR kSettingsTooltipId = 1;
 constexpr UINT_PTR kThemeTooltipId = 2;
 constexpr int kNormalWindowWidth = 1080;
-constexpr DWORD kDwmUseImmersiveDarkMode = 20;
-constexpr DWORD kDwmWindowAttributeCaptionButtonBounds = 5;
-constexpr DWORD kDwmWindowAttributeBorderColor = 34;
-constexpr DWORD kDwmWindowAttributeCaptionColor = 35;
-constexpr DWORD kDwmWindowAttributeTextColor = 36;
+constexpr DWORD kMainWindowStyle=WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX|WS_MAXIMIZEBOX|WS_THICKFRAME;
 
-struct ThemePalette {
-    COLORREF windowBackground;
-    COLORREF panelBackground;
-    COLORREF cardBackground;
-    COLORREF normalBorder;
-    COLORREF hoverBorder;
-    COLORREF selectedBorder;
-    COLORREF boundBorder;
-    COLORREF mutedText;
-    COLORREF mainText;
-    COLORREF inputBackground;
-    COLORREF errorBorder;
-    COLORREF activeWindowBorder;
-    COLORREF inactiveWindowBorder;
-    COLORREF titleText;
-    COLORREF previewBackground;
-    COLORREF previewBorder;
-    COLORREF previewCanvas;
-    COLORREF processText;
-    COLORREF scrollTrack;
-    COLORREF scrollThumb;
-    COLORREF panelBorder;
-    COLORREF inputBorder;
-    COLORREF placeholderText;
-    COLORREF disabledText;
-    COLORREF disabledButton;
-    COLORREF disabledButtonBorder;
-    COLORREF unbindButton;
-    COLORREF unbindButtonBorder;
-    COLORREF bindButton;
-    COLORREF bindButtonBorder;
-    COLORREF themeHover;
-    COLORREF themePressed;
-    COLORREF buttonText;
-};
 
 struct Texts {
     const wchar_t* selectWindow;
@@ -143,10 +106,15 @@ struct AppState {
     HINSTANCE instance{};
     HWND hwnd{};
     HICON appIcon{};
-    HBITMAP sunIcon{};
-    HBITMAP moonIcon{};
-    HBITMAP settingsDarkIcon{};
-    HBITMAP settingsLightIcon{};
+    HICON appLargeIcon{};
+    RenderContext renderer;
+    RenderContext settingsRenderer;
+    RenderContext startupRenderer, githubRenderer, startupLabelRenderer, statusRenderer;
+    int captionHot{}, captionPressed{};
+    bool renderingFailed{};
+    ChromeStatus chromeStatus,settingsChromeStatus;
+    unsigned renderRetries{};
+    bool settingsCloseHot{}, settingsClosePressed{};
     HWND settingsWindow{};
     HWND captionTooltips{};
     HWND startupButton{};
@@ -154,9 +122,6 @@ struct AppState {
     HWND startupLabel{};
     HWND startupStatusLabel{};
     HFONT settingsFont{};
-    HBRUSH settingsBackgroundBrush{};
-    HBITMAP githubDarkIcon{};
-    HBITMAP githubLightIcon{};
     UINT settingsDpi{96};
     UINT taskbarCreatedMessage{};
     int trayRetries{};
@@ -245,35 +210,7 @@ void PrependWindowCueItem(std::vector<WindowInfo>& windows) {
     windows.insert(windows.begin(), CreateWindowCueItem());
 }
 
-const ThemePalette& P() {
-    static const ThemePalette dark{
-        RGB(40, 42, 48), RGB(33, 33, 33), RGB(23, 23, 23),
-        RGB(58, 58, 58), RGB(94, 94, 94), RGB(16, 163, 127),
-        RGB(126, 211, 162), RGB(180, 180, 180), RGB(236, 236, 236),
-        RGB(24, 24, 24), RGB(239, 107, 107), RGB(82, 84, 90),
-        RGB(58, 60, 66), RGB(236, 236, 236), RGB(33, 33, 33),
-        RGB(58, 58, 58), RGB(0, 0, 0), RGB(166, 166, 166),
-        RGB(43, 43, 43), RGB(104, 104, 104), RGB(58, 58, 58),
-        RGB(86, 86, 86), RGB(155, 155, 155), RGB(160, 160, 160),
-        RGB(52, 52, 52), RGB(75, 75, 75), RGB(127, 50, 50),
-        RGB(198, 93, 93), RGB(236, 236, 236), RGB(236, 236, 236),
-        RGB(52, 52, 52), RGB(65, 65, 65), RGB(23, 23, 23)
-    };
-    static const ThemePalette light{
-        RGB(245, 248, 252), RGB(238, 243, 249), RGB(245, 248, 252),
-        RGB(211, 213, 216), RGB(157, 160, 164), RGB(15, 143, 112),
-        RGB(22, 135, 94), RGB(91, 95, 101), RGB(35, 36, 38),
-        RGB(245, 248, 252), RGB(201, 63, 63), RGB(188, 190, 194),
-        RGB(211, 213, 216), RGB(47, 48, 51), RGB(238, 243, 249),
-        RGB(223, 224, 226), RGB(233, 238, 245), RGB(101, 105, 111),
-        RGB(232, 233, 235), RGB(168, 170, 174), RGB(218, 219, 222),
-        RGB(176, 178, 182), RGB(105, 109, 115), RGB(96, 98, 102),
-        RGB(230, 231, 233), RGB(207, 209, 212), RGB(179, 38, 30),
-        RGB(140, 29, 24), RGB(35, 36, 38), RGB(35, 36, 38),
-        RGB(226, 227, 229), RGB(214, 215, 218), RGB(245, 248, 252)
-    };
-    return g.darkMode ? dark : light;
-}
+const ThemePalette& P() { return GetThemePalette(g.darkMode); }
 
 UINT QueryWindowDpi(HWND hwnd) {
     HMODULE user32 = GetModuleHandleW(L"user32.dll");
@@ -424,6 +361,7 @@ void ResetCaptionInteraction() {
     }
     g.settingsButtonHovered = g.themeButtonHovered = false;
     g.settingsButtonPressed = g.themeButtonPressed = false;
+    g.captionHot=g.captionPressed=0;
     g.settingsHoverAnimation = {};
     g.themeHoverAnimation = {};
     PopCaptionTooltip();
@@ -451,298 +389,50 @@ void CreateFonts() {
     g.smallFont = CreateUiFont(8, FW_NORMAL);
 }
 
-void FillRounded(HDC dc, const RECT& rect, int radius, COLORREF color) {
-    HBRUSH brush = CreateSolidBrush(color);
-    HPEN pen = CreatePen(PS_NULL, 0, color);
-    HGDIOBJ oldBrush = SelectObject(dc, brush);
-    HGDIOBJ oldPen = SelectObject(dc, pen);
-    RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
-    SelectObject(dc, oldPen);
-    SelectObject(dc, oldBrush);
-    DeleteObject(pen);
-    DeleteObject(brush);
+bool UseSoftwareRenderer() {
+    wchar_t value[2]{};
+    return GetEnvironmentVariableW(L"WINDOWCUE_RENDER_SOFTWARE",value,2)==1 && value[0]==L'1';
 }
-
-void StrokeRounded(HDC dc, const RECT& rect, int radius, int width, COLORREF color) {
-    HBRUSH brush = static_cast<HBRUSH>(GetStockObject(NULL_BRUSH));
-    HPEN pen = CreatePen(PS_SOLID, width, color);
-    HGDIOBJ oldBrush = SelectObject(dc, brush);
-    HGDIOBJ oldPen = SelectObject(dc, pen);
-    RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
-    SelectObject(dc, oldPen);
-    SelectObject(dc, oldBrush);
-    DeleteObject(pen);
+void FillRounded(RenderContext& dc, const RECT& rect, int diameter, COLORREF color) {
+    dc.Rounded(rect, diameter / 2.f, color);
 }
-
-void DrawTextValue(HDC dc, const std::wstring& text, RECT rect, HFONT font,
-                   COLORREF color, UINT format) {
-    HGDIOBJ oldFont = SelectObject(dc, font);
-    SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, color);
-    DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &rect, format);
-    SelectObject(dc, oldFont);
+void StrokeRounded(RenderContext& dc, const RECT& rect, int diameter, int width, COLORREF color) {
+    dc.Stroke(rect, diameter / 2.f, static_cast<float>(width), color);
 }
-
-void DeleteThemeIcons() {
-    if (g.sunIcon) DeleteObject(g.sunIcon);
-    if (g.moonIcon) DeleteObject(g.moonIcon);
-    if (g.settingsDarkIcon) DeleteObject(g.settingsDarkIcon);
-    if (g.settingsLightIcon) DeleteObject(g.settingsLightIcon);
-    g.sunIcon = g.moonIcon = nullptr;
-    g.settingsDarkIcon = g.settingsLightIcon = nullptr;
-}
-
-void RefreshThemeIcons() {
-    DeleteThemeIcons();
-    int iconSize = Scale(18);
-    g.sunIcon = RenderSvgResource(g.instance, IDR_SUN_SVG, iconSize);
-    g.moonIcon = RenderSvgResource(g.instance, IDR_MOON_SVG, iconSize);
-    g.settingsDarkIcon = RenderSvgResource(g.instance, IDR_SETTINGS_DARK_SVG, iconSize);
-    g.settingsLightIcon = RenderSvgResource(g.instance, IDR_SETTINGS_LIGHT_SVG, iconSize);
-}
-
-void DrawFallbackThemeIcon(HDC dc, const RECT& rect, bool sun) {
-    int size = Scale(18);
-    int left = rect.left + (RectWidth(rect) - size) / 2;
-    int top = rect.top + (RectHeight(rect) - size) / 2;
-    COLORREF color = P().mainText;
-    HPEN pen = CreatePen(PS_SOLID, std::max(1, Scale(1)), color);
-    HGDIOBJ oldPen = SelectObject(dc, pen);
-    HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-    if (sun) {
-        int centerX = left + size / 2;
-        int centerY = top + size / 2;
-        int radius = Scale(3);
-        Ellipse(dc, centerX - radius, centerY - radius,
-                centerX + radius + 1, centerY + radius + 1);
-        const POINT rays[][2] = {
-            {{centerX, top}, {centerX, top + Scale(3)}},
-            {{centerX, top + size - Scale(3)}, {centerX, top + size}},
-            {{left, centerY}, {left + Scale(3), centerY}},
-            {{left + size - Scale(3), centerY}, {left + size, centerY}},
-            {{left + Scale(2), top + Scale(2)}, {left + Scale(4), top + Scale(4)}},
-            {{left + size - Scale(4), top + size - Scale(4)},
-             {left + size - Scale(2), top + size - Scale(2)}},
-            {{left + size - Scale(2), top + Scale(2)},
-             {left + size - Scale(4), top + Scale(4)}},
-            {{left + Scale(4), top + size - Scale(4)},
-             {left + Scale(2), top + size - Scale(2)}}
-        };
-        for (const auto& ray : rays) {
-            MoveToEx(dc, ray[0].x, ray[0].y, nullptr);
-            LineTo(dc, ray[1].x, ray[1].y);
-        }
-    } else {
-        Arc(dc, left + Scale(3), top + Scale(1), left + size - Scale(2),
-            top + size - Scale(1), left + size - Scale(2), top + Scale(3),
-            left + Scale(6), top + size - Scale(3));
-        Arc(dc, left + Scale(5), top + Scale(1), left + size + Scale(2),
-            top + size - Scale(1), left + Scale(6), top + size - Scale(3),
-            left + size - Scale(2), top + Scale(3));
-    }
-    SelectObject(dc, oldBrush);
-    SelectObject(dc, oldPen);
-    DeleteObject(pen);
-}
-
-void DrawSvgBitmap(HDC dc, HBITMAP icon, const RECT& destination, int offsetY = 0) {
-    if (!icon) return;
-    BITMAP details{};
-    GetObjectW(icon, sizeof(details), &details);
-    HDC source = CreateCompatibleDC(dc);
-    HGDIOBJ old = SelectObject(source, icon);
-    int left = destination.left + (RectWidth(destination) - details.bmWidth) / 2;
-    int top = destination.top + (RectHeight(destination) - details.bmHeight) / 2 + offsetY;
-    BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
-    AlphaBlend(dc, left, top, details.bmWidth, details.bmHeight,
-               source, 0, 0, details.bmWidth, details.bmHeight, blend);
-    SelectObject(source, old);
-    DeleteDC(source);
-}
-
-void DrawThemeIcon(HDC dc) {
-    HBITMAP icon = g.darkMode ? g.sunIcon : g.moonIcon;
-    int offset = g.themeButtonPressed && g.themeButtonHovered ? Scale(1) : 0;
-    if (icon) DrawSvgBitmap(dc, icon, g.themeButtonRect, offset);
-    else {
-        RECT iconRect = g.themeButtonRect;
-        OffsetRect(&iconRect, 0, offset);
-        DrawFallbackThemeIcon(dc, iconRect, g.darkMode);
-    }
-}
-
+void DrawTextValue(RenderContext& dc, const std::wstring& text, RECT rect, HFONT font,
+                   COLORREF color, UINT format) { dc.Text(text,rect,font,color,format); }
+void DeleteThemeIcons() { g.renderer.Discard(); }
+void RefreshThemeIcons() { g.renderer.Discard(); }
 COLORREF BlendCaptionColor(COLORREF first, COLORREF second, double amount) {
-    auto channel = [amount](BYTE a, BYTE b) {
-        return static_cast<BYTE>(a + (b - a) * amount + 0.5);
-    };
-    return RGB(channel(GetRValue(first), GetRValue(second)),
-               channel(GetGValue(first), GetGValue(second)),
-               channel(GetBValue(first), GetBValue(second)));
+    auto channel=[amount](BYTE a,BYTE b) { return static_cast<BYTE>(a+(b-a)*amount+.5); };
+    return RGB(channel(GetRValue(first),GetRValue(second)),channel(GetGValue(first),GetGValue(second)),
+               channel(GetBValue(first),GetBValue(second)));
 }
-
-HBITMAP CreateAlphaBitmap(HDC dc, int width, int height, void** pixels) {
-    BITMAPINFO info{};
-    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    info.bmiHeader.biWidth = width;
-    info.bmiHeader.biHeight = -height;
-    info.bmiHeader.biPlanes = 1;
-    info.bmiHeader.biBitCount = 32;
-    info.bmiHeader.biCompression = BI_RGB;
-    return CreateDIBSection(dc, &info, DIB_RGB_COLORS, pixels, nullptr, 0);
-}
-
-void DrawCaptionButtonBackground(HDC dc, const RECT& rect, double hover,
+void DrawCaptionButtonBackground(RenderContext& dc, const RECT& rect, double hover,
                                  bool pressed, bool selected) {
-    if (hover <= 0.0 && !pressed && !selected) return;
-    COLORREF color = pressed ? P().themePressed : selected ?
-        BlendCaptionColor(P().themeHover, P().themePressed, 0.35) : P().themeHover;
-    RECT background = rect;
-    InflateRect(&background, -Scale(3), -Scale(3));
-    int width = RectWidth(background), height = RectHeight(background);
-    if (width <= 0 || height <= 0) return;
-    void* pixels = nullptr;
-    HBITMAP bitmap = CreateAlphaBitmap(dc, width, height, &pixels);
-    HDC source = CreateCompatibleDC(dc);
-    if (!bitmap || !source || !pixels) {
-        if (source) DeleteDC(source);
-        if (bitmap) DeleteObject(bitmap);
-        return;
-    }
-    // DWM glass needs both premultiplied RGB and meaningful alpha. An opaque
-    // GDI color ramp would briefly darken light mode instead of fading in.
-    double opacity = pressed || selected ? 1.0 : std::clamp(hover, 0.0, 1.0);
-    double radius = std::min({static_cast<double>(Scale(5)) / 2.0,
-                              static_cast<double>(width) / 2.0,
-                              static_cast<double>(height) / 2.0});
-    auto* output = static_cast<DWORD*>(pixels);
-    constexpr int samples = 4;
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            int covered = 0;
-            for (int sy = 0; sy < samples; ++sy) {
-                for (int sx = 0; sx < samples; ++sx) {
-                    double px = x + (sx + 0.5) / samples;
-                    double py = y + (sy + 0.5) / samples;
-                    double dx = std::max({radius - px, px - (width - radius), 0.0});
-                    double dy = std::max({radius - py, py - (height - radius), 0.0});
-                    if (dx * dx + dy * dy <= radius * radius) ++covered;
-                }
-            }
-            DWORD alpha = static_cast<DWORD>(255.0 * opacity * covered /
-                                              (samples * samples) + 0.5);
-            DWORD red = (GetRValue(color) * alpha + 127) / 255;
-            DWORD green = (GetGValue(color) * alpha + 127) / 255;
-            DWORD blue = (GetBValue(color) * alpha + 127) / 255;
-            output[y * width + x] = (alpha << 24) | (red << 16) | (green << 8) | blue;
-        }
-    }
-    HGDIOBJ oldBitmap = SelectObject(source, bitmap);
-    BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
-    AlphaBlend(dc, background.left, background.top, width, height,
-               source, 0, 0, width, height, blend);
-    SelectObject(source, oldBitmap);
-    DeleteDC(source);
-    DeleteObject(bitmap);
+    if(hover<=0 && !pressed && !selected) return;
+    RECT background=rect;InflateRect(&background,-Scale(3),-Scale(3));
+    dc.Rounded(background,static_cast<float>(Scale(3)),pressed ? P().themePressed : P().themeHover,
+               pressed || selected ? 1.f : static_cast<float>(hover));
 }
-
-void DrawCaptionButtons(HDC dc) {
-    bool settingsPressed = g.settingsButtonPressed && g.settingsButtonHovered;
-    DrawCaptionButtonBackground(dc, g.settingsButtonRect, g.settingsHoverAnimation.value,
-        settingsPressed, g.settingsWindow && IsWindowVisible(g.settingsWindow));
-    HBITMAP settingsIcon = g.darkMode ? g.settingsDarkIcon : g.settingsLightIcon;
-    int settingsOffset = settingsPressed ? Scale(1) : 0;
-    if (settingsIcon) DrawSvgBitmap(dc, settingsIcon, g.settingsButtonRect, settingsOffset);
-    else {
-        RECT iconRect = g.settingsButtonRect;
-        OffsetRect(&iconRect, 0, settingsOffset);
-        DrawTextValue(dc, L"\x2699", iconRect, g.bodyFont, P().mainText,
-                      DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+void DrawCaptionButtons(RenderContext& dc) {
+    bool settingsPressed=g.settingsButtonPressed && g.settingsButtonHovered;
+    DrawCaptionButtonBackground(dc,g.settingsButtonRect,g.settingsHoverAnimation.value,
+        settingsPressed,g.settingsWindow && IsWindowVisible(g.settingsWindow));
+    dc.Icon(VectorIcon::Settings,g.settingsButtonRect,P().mainText,18,settingsPressed ? 1.f : 0.f);
+    DrawCaptionButtonBackground(dc,g.themeButtonRect,g.themeHoverAnimation.value,
+        g.themeButtonPressed && g.themeButtonHovered,false);
+    dc.Icon(g.darkMode ? VectorIcon::Sun : VectorIcon::Moon,g.themeButtonRect,P().mainText,
+            18,g.themeButtonPressed && g.themeButtonHovered ? 1.f : 0.f);
+    int id=1;
+    for(const RECT& r : {g.minButtonRect,g.maxButtonRect,g.closeButtonRect}) {
+        if(g.captionHot==id || g.captionPressed==id)
+            dc.Fill(r,id==3 ? RGB(196,43,44) : P().themeHover);
+        dc.Icon(id==1 ? VectorIcon::Minimize : id==2 ? (IsZoomed(g.hwnd) ? VectorIcon::Restore :
+            VectorIcon::Maximize) : VectorIcon::Close,r,
+            id==3 && (g.captionHot==3 || g.captionPressed==3) ? RGB(255,255,255) : P().mainText,16);
+        ++id;
     }
-    DrawCaptionButtonBackground(dc, g.themeButtonRect, g.themeHoverAnimation.value,
-        g.themeButtonPressed && g.themeButtonHovered, false);
-    DrawThemeIcon(dc);
-}
-
-bool DrawCaptionButtonsOnly(HDC target, const RECT& updateRect) {
-    RECT buttons{}, intersection{};
-    UnionRect(&buttons, &g.settingsButtonRect, &g.themeButtonRect);
-    if (!IntersectRect(&intersection, &buttons, &updateRect) ||
-        !EqualRect(&intersection, &updateRect)) return false;
-    int width = RectWidth(updateRect), height = RectHeight(updateRect);
-    if (width <= 0 || height <= 0) return false;
-    HDC dc = CreateCompatibleDC(target);
-    void* pixels = nullptr;
-    HBITMAP bitmap = CreateAlphaBitmap(target, width, height, &pixels);
-    if (!dc || !bitmap || !pixels) {
-        if (bitmap) DeleteObject(bitmap);
-        if (dc) DeleteDC(dc);
-        return false;
-    }
-    ZeroMemory(pixels, static_cast<size_t>(width) * height * sizeof(DWORD));
-    HGDIOBJ oldBitmap = SelectObject(dc, bitmap);
-    SetViewportOrgEx(dc, -updateRect.left, -updateRect.top, nullptr);
-    DrawCaptionButtons(dc);
-    if (!IsZoomed(g.hwnd)) {
-        RECT client{};
-        GetClientRect(g.hwnd, &client);
-        HBRUSH frame = CreateSolidBrush(
-            g.windowActive ? P().activeWindowBorder : P().inactiveWindowBorder);
-        FrameRect(dc, &client, frame);
-        DeleteObject(frame);
-    }
-    BitBlt(target, updateRect.left, updateRect.top, width, height,
-           dc, updateRect.left, updateRect.top, SRCCOPY);
-    SelectObject(dc, oldBitmap);
-    DeleteObject(bitmap);
-    DeleteDC(dc);
-    return true;
-}
-
-void DrawCompositedTitle(HDC target, const RECT& destination) {
-    int width = RectWidth(destination);
-    int height = RectHeight(destination);
-    if (width <= 0 || height <= 0) return;
-
-    HDC paint = CreateCompatibleDC(target);
-    if (!paint) return;
-    BITMAPINFO info{};
-    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    info.bmiHeader.biWidth = width;
-    info.bmiHeader.biHeight = -height;
-    info.bmiHeader.biPlanes = 1;
-    info.bmiHeader.biBitCount = 32;
-    info.bmiHeader.biCompression = BI_RGB;
-    void* bits = nullptr;
-    HBITMAP bitmap = CreateDIBSection(target, &info, DIB_RGB_COLORS,
-                                      &bits, nullptr, 0);
-    if (!bitmap || !bits) {
-        if (bitmap) DeleteObject(bitmap);
-        DeleteDC(paint);
-        return;
-    }
-    ZeroMemory(bits, static_cast<size_t>(width) * static_cast<size_t>(height) * 4);
-    HGDIOBJ oldBitmap = SelectObject(paint, bitmap);
-    HGDIOBJ oldFont = SelectObject(paint, g.bodyFont);
-
-    HTHEME theme = OpenThemeData(nullptr, L"CompositedWindow::Window");
-    if (!theme) theme = OpenThemeData(nullptr, L"Window");
-    if (theme) {
-        DTTOPTS options{sizeof(options)};
-        options.dwFlags = DTT_COMPOSITED | DTT_TEXTCOLOR;
-        options.crText = P().titleText;
-        RECT local{0, 0, width, height};
-        DrawThemeTextEx(theme, paint, 0, 0, L"WindowCue", -1,
-                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
-                        &local, &options);
-        CloseThemeData(theme);
-        BitBlt(target, destination.left, destination.top, width, height,
-               paint, 0, 0, SRCCOPY);
-    }
-
-    SelectObject(paint, oldFont);
-    SelectObject(paint, oldBitmap);
-    DeleteObject(bitmap);
-    DeleteDC(paint);
 }
 
 int BindingIndexForWindow(HWND hwnd) {
@@ -816,8 +506,8 @@ void EndCapture(bool restore) {
     if (restore) RestoreBindings();
 }
 
-// BeginPaint preserves this nonrectangular update region. Keep live DWM
-// surfaces out of decoration-only GDI paints, including focus and hover changes.
+// The HWND renderer explicitly imports this nonrectangular update region.
+// Decoration and focus paints leave the live DWM preview area untouched.
 void InvalidateCardDecoration(int index) {
     if (index < 0 || index >= static_cast<int>(g.windows.size())) return;
     const WindowInfo& item = g.windows[index];
@@ -1074,23 +764,6 @@ void Layout() {
     g.minButtonRect = MakeRect(client.right - captionWidth * 3, 0,
                                client.right - captionWidth * 2, titleHeight);
 
-    // Use DWM's actual caption-button bounds whenever they are available so the
-    // custom theme button keeps native spacing at every DPI scale.
-    RECT captionBounds{};
-    if (SUCCEEDED(DwmGetWindowAttribute(
-            g.hwnd, kDwmWindowAttributeCaptionButtonBounds,
-            &captionBounds, sizeof(captionBounds))) &&
-        RectWidth(captionBounds) >= Scale(90) && RectHeight(captionBounds) > 0) {
-        int nativeButtonWidth = RectWidth(captionBounds) / 3;
-        g.minButtonRect = MakeRect(captionBounds.left, captionBounds.top,
-                                   captionBounds.left + nativeButtonWidth,
-                                   captionBounds.bottom);
-        g.maxButtonRect = MakeRect(g.minButtonRect.right, captionBounds.top,
-                                   captionBounds.right - nativeButtonWidth,
-                                   captionBounds.bottom);
-        g.closeButtonRect = MakeRect(g.maxButtonRect.right, captionBounds.top,
-                                     captionBounds.right, captionBounds.bottom);
-    }
     g.themeButtonRect = MakeRect(g.minButtonRect.left - Scale(38), 0,
                                  g.minButtonRect.left, titleHeight);
     g.settingsButtonRect = MakeRect(g.themeButtonRect.left - Scale(38), 0,
@@ -1244,6 +917,7 @@ void RefreshWindows(bool force) {
         item.thumbnailSourceIconic = existing->thumbnailSourceIconic;
         item.thumbnailSourceForeground = existing->thumbnailSourceForeground;
     }
+    g.renderer.ForgetImages();
     ReleaseWindows(g.windows);
     g.windows = std::move(refreshed);
     g.signature = CreateSignature(g.windows);
@@ -1356,38 +1030,24 @@ void UpdateThumbnails(bool force = false) {
     }
 }
 
-void DrawInterface(HDC target, const RECT& updateRect) {
-    if (DrawCaptionButtonsOnly(target, updateRect)) return;
-    RECT client{};
-    GetClientRect(g.hwnd, &client);
-    HDC dc = CreateCompatibleDC(target);
-    void* pixels = nullptr;
-    HBITMAP bitmap = CreateAlphaBitmap(target, client.right, client.bottom, &pixels);
-    if (!dc || !bitmap || !pixels) {
-        if (bitmap) DeleteObject(bitmap);
-        if (dc) DeleteDC(dc);
+void DrawInterface(HDC, const RECT& updateRect, const std::vector<RECT>& region = {}) {
+    RECT client{};GetClientRect(g.hwnd,&client);
+    auto& dc=g.renderer;
+    if(!dc.Begin(g.hwnd,g.dpi,updateRect,UseSoftwareRenderer())) {
+        g.renderingFailed=true;
+        if(g.renderRetries<3) SetTimer(g.hwnd,kRenderRetryTimer,150,nullptr);
         return;
     }
-    ZeroMemory(pixels, static_cast<size_t>(client.right) * client.bottom * sizeof(DWORD));
-    HGDIOBJ oldBitmap = SelectObject(dc, bitmap);
-    HBRUSH background = CreateSolidBrush(P().windowBackground);
-    FillRect(dc, &client, background);
-    DeleteObject(background);
-
-    // The top strip is extended DWM glass. Clearing its RGB surface lets DWM
-    // provide one authoritative caption color instead of additively blending a
-    // second client color into the left/right islands.
-    HBRUSH transparentCaption = CreateSolidBrush(RGB(0, 0, 0));
-    FillRect(dc, &g.titleRect, transparentCaption);
-    DeleteObject(transparentCaption);
-
-    int iconSize = Scale(18);
-    if (g.appIcon) DrawIconEx(dc, Scale(10), (Scale(34) - iconSize) / 2,
-                              g.appIcon, iconSize, iconSize, 0, nullptr, DI_NORMAL);
-    RECT appTitle = MakeRect(Scale(36), 0, g.settingsButtonRect.left - Scale(4), Scale(34));
-
+    bool clipped=dc.PushRegion(region);
+    dc.Fill(client,P().windowBackground);
+    int iconSize=Scale(18);
+    dc.AppIcon(g.appIcon,MakeRect(Scale(10),(Scale(34)-iconSize)/2,Scale(10)+iconSize,(Scale(34)+iconSize)/2));
+    RECT appTitle=MakeRect(Scale(36),0,g.settingsButtonRect.left-Scale(4),Scale(34));
+    DrawTextValue(dc,L"WindowCue",appTitle,g.bodyFont,P().titleText,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
     DrawCaptionButtons(dc);
-
+    // Hover animation stays within the caption. A newly recreated target still
+    // needs the complete scene even when its first update was only the caption.
+    if(dc.FreshFrame() || updateRect.bottom>g.titleRect.bottom) {
     FillRounded(dc, g.previewOuter, Scale(12), P().previewBackground);
     StrokeRounded(dc, g.previewOuter, Scale(12), Scale(1), P().previewBorder);
     if (g.windows.empty()) {
@@ -1395,9 +1055,7 @@ void DrawInterface(HDC target, const RECT& updateRect) {
                       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 
-    int savedClip = SaveDC(dc);
-    IntersectClipRect(dc, g.previewInner.left, g.previewInner.top,
-                      g.previewInner.right, g.previewInner.bottom);
+    dc.PushClip(g.previewInner);
     for (size_t i = 0; i < g.windows.size(); ++i) {
         const WindowInfo& item = g.windows[i];
         RECT intersection{};
@@ -1414,8 +1072,8 @@ void DrawInterface(HDC target, const RECT& updateRect) {
 
         int itemIcon = Scale(18);
         HICON displayIcon = item.isWindowCue ? g.appIcon : item.icon;
-        if (displayIcon) DrawIconEx(dc, item.cardRect.left + Scale(9), item.cardRect.top + Scale(7),
-                                   displayIcon, itemIcon, itemIcon, 0, nullptr, DI_NORMAL);
+        if (displayIcon) dc.AppIcon(displayIcon,MakeRect(item.cardRect.left+Scale(9),item.cardRect.top+Scale(7),
+            item.cardRect.left+Scale(9)+itemIcon,item.cardRect.top+Scale(7)+itemIcon));
         RECT title = MakeRect(item.cardRect.left + Scale(34), item.cardRect.top + Scale(4),
                               item.cardRect.right - Scale(8), item.cardRect.top + Scale(21));
         DrawTextValue(dc, item.title, title, g.titleFont, P().mainText,
@@ -1431,11 +1089,11 @@ void DrawInterface(HDC target, const RECT& updateRect) {
                 (RectWidth(item.previewRect) - selfIconSize) / 2;
             int selfIconTop = item.previewRect.top +
                 (RectHeight(item.previewRect) - selfIconSize) / 2;
-            DrawIconEx(dc, selfIconLeft, selfIconTop, displayIcon,
-                       selfIconSize, selfIconSize, 0, nullptr, DI_NORMAL);
+            dc.AppIcon(g.appLargeIcon ? g.appLargeIcon : displayIcon,
+                MakeRect(selfIconLeft,selfIconTop,selfIconLeft+selfIconSize,selfIconTop+selfIconSize));
         }
     }
-    RestoreDC(dc, savedClip);
+    dc.PopClip();
 
     if (g.maxScroll > 0) {
         FillRounded(dc, g.scrollbarRect, Scale(5), P().scrollTrack);
@@ -1450,10 +1108,10 @@ void DrawInterface(HDC target, const RECT& updateRect) {
         const WindowInfo& item = g.windows[g.selected];
         int selectedIcon = Scale(26);
         HICON selectedWindowIcon = item.isWindowCue ? g.appIcon : item.icon;
-        if (selectedWindowIcon) DrawIconEx(
-            dc, g.bindingRect.left + Scale(16),
-            g.bindingRect.top + (RectHeight(g.bindingRect) - selectedIcon) / 2,
-            selectedWindowIcon, selectedIcon, selectedIcon, 0, nullptr, DI_NORMAL);
+        if (selectedWindowIcon) {
+            int x=g.bindingRect.left+Scale(16), y=g.bindingRect.top+(RectHeight(g.bindingRect)-selectedIcon)/2;
+            dc.AppIcon(selectedWindowIcon,MakeRect(x,y,x+selectedIcon,y+selectedIcon));
+        }
         RECT selectedTitle = MakeRect(g.bindingRect.left + Scale(56), g.bindingRect.top + Scale(12),
                                       g.hotkeyRect.left - Scale(15), g.bindingRect.top + Scale(32));
         DrawTextValue(dc, item.title, selectedTitle, g.titleFont, P().mainText,
@@ -1486,29 +1144,16 @@ void DrawInterface(HDC target, const RECT& updateRect) {
     FillRounded(dc, g.bindButtonRect, Scale(8), buttonColor);
     StrokeRounded(dc, g.bindButtonRect, Scale(8), Scale(1), buttonBorder);
     DrawTextValue(dc, bindingIndex >= 0 ? T().unbind : T().bind, g.bindButtonRect,
-                  g.bodyFont, hasSelection ? P().buttonText : P().disabledText,
+                  g.bodyFont, hasSelection ? (bindingIndex>=0 ? P().unbindText : P().buttonText) : P().disabledText,
                   DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-    if (!IsZoomed(g.hwnd)) {
-        HBRUSH frame = CreateSolidBrush(
-            g.windowActive ? P().activeWindowBorder : P().inactiveWindowBorder);
-        FrameRect(dc, &client, frame);
-        DeleteObject(frame);
     }
 
-    RECT paintRect{};
-    if (IntersectRect(&paintRect, &client, &updateRect)) {
-        BitBlt(target, paintRect.left, paintRect.top,
-               RectWidth(paintRect), RectHeight(paintRect), dc,
-               paintRect.left, paintRect.top, SRCCOPY);
-        RECT titlePaint{};
-        if (IntersectRect(&titlePaint, &paintRect, &appTitle)) {
-            DrawCompositedTitle(target, appTitle);
-        }
-    }
-    SelectObject(dc, oldBitmap);
-    DeleteObject(bitmap);
-    DeleteDC(dc);
+    if(!IsZoomed(g.hwnd)) dc.Stroke(client,0,1,g.windowActive ? P().activeWindowBorder : P().inactiveWindowBorder);
+    if(clipped) dc.PopRegion();
+    HRESULT result=dc.End();
+    g.renderingFailed=FAILED(result);
+    if(SUCCEEDED(result)) {g.renderRetries=0;KillTimer(g.hwnd,kRenderRetryTimer);}
+    if(result==D2DERR_RECREATE_TARGET) InvalidateRect(g.hwnd,nullptr,FALSE);
 }
 
 void AddTrayIcon() {
@@ -1627,30 +1272,11 @@ void HandleClick(POINT point) {
 }
 
 void ApplyDwmFrame(HWND hwnd) {
-    BOOL useDarkMode = g.darkMode ? TRUE : FALSE;
-    DwmSetWindowAttribute(hwnd, kDwmUseImmersiveDarkMode,
-                          &useDarkMode, sizeof(useDarkMode));
-    // The extended title strip is cleared in DrawInterface, so DWM owns the
-    // final caption color across the icon, title and system-button regions.
-    COLORREF captionColor = P().windowBackground;
-    COLORREF captionTextColor = P().mainText;
-    DwmSetWindowAttribute(hwnd, kDwmWindowAttributeCaptionColor,
-                          &captionColor, sizeof(captionColor));
-    DwmSetWindowAttribute(hwnd, kDwmWindowAttributeTextColor,
-                          &captionTextColor, sizeof(captionTextColor));
-    COLORREF systemBorder = g.windowActive ? P().activeWindowBorder
-                                           : P().inactiveWindowBorder;
-    DwmSetWindowAttribute(hwnd, kDwmWindowAttributeBorderColor,
-                          &systemBorder, sizeof(systemBorder));
-    MARGINS margins{0, 0, Scale(34), 0};
-    DwmExtendFrameIntoClientArea(hwnd, &margins);
+    auto result=ConfigureOpaqueChrome(hwnd);
+    if(hwnd==g.hwnd) g.chromeStatus=result;
+    else g.settingsChromeStatus=result;
 }
-
-void ApplyDwmBorder(HWND hwnd) {
-    COLORREF systemBorder = g.windowActive ? P().activeWindowBorder : P().inactiveWindowBorder;
-    DwmSetWindowAttribute(hwnd, kDwmWindowAttributeBorderColor,
-                          &systemBorder, sizeof(systemBorder));
-}
+void ApplyDwmBorder(HWND) {}
 
 int SettingsScale(int value) {
     return MulDiv(value, static_cast<int>(g.settingsDpi), 96);
@@ -1676,6 +1302,7 @@ void UpdateStartupControls() {
     SetWindowTextW(g.startupButton, windowsDisabled ? T().startupWindowsSettings :
                    (enabled ? T().startupDisable : T().startupEnable));
     EnableWindow(g.startupButton, canChange ? TRUE : FALSE);
+    NotifyToggle(g.startupButton,enabled);
     g.settingsMessage = StartupStateText(g.startupStatus.state);
     if (!g.settingsMessage.empty() && !g.startupStatus.detail.empty())
         g.settingsMessage += L"\r\n" + g.startupStatus.detail;
@@ -1692,16 +1319,10 @@ void RefreshStartupControls() {
 
 void RefreshSettingsResources() {
     if (g.settingsFont) DeleteObject(g.settingsFont);
-    if (g.settingsBackgroundBrush) DeleteObject(g.settingsBackgroundBrush);
-    if (g.githubDarkIcon) DeleteObject(g.githubDarkIcon);
-    if (g.githubLightIcon) DeleteObject(g.githubLightIcon);
     g.settingsFont = CreateFontW(-MulDiv(9, static_cast<int>(g.settingsDpi), 72),
         0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
         OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_NATURAL_QUALITY,
         VARIABLE_PITCH | FF_SWISS, L"Microsoft YaHei UI");
-    g.settingsBackgroundBrush = CreateSolidBrush(P().windowBackground);
-    g.githubDarkIcon = RenderSvgResource(g.instance, IDR_GITHUB_DARK_SVG, SettingsScale(20));
-    g.githubLightIcon = RenderSvgResource(g.instance, IDR_GITHUB_LIGHT_SVG, SettingsScale(20));
     for (HWND control : {g.startupButton, g.githubButton, g.startupLabel,
                           g.startupStatusLabel}) {
         if (control) SendMessageW(control, WM_SETFONT,
@@ -1711,15 +1332,7 @@ void RefreshSettingsResources() {
 
 void ApplySettingsTheme() {
     if (!g.settingsWindow) return;
-    BOOL dark = g.darkMode ? TRUE : FALSE;
-    COLORREF background = P().windowBackground;
-    COLORREF text = P().mainText;
-    DwmSetWindowAttribute(g.settingsWindow, kDwmUseImmersiveDarkMode, &dark, sizeof(dark));
-    DwmSetWindowAttribute(g.settingsWindow, kDwmWindowAttributeCaptionColor,
-                          &background, sizeof(background));
-    DwmSetWindowAttribute(g.settingsWindow, kDwmWindowAttributeTextColor, &text, sizeof(text));
-    if (g.settingsBackgroundBrush) DeleteObject(g.settingsBackgroundBrush);
-    g.settingsBackgroundBrush = CreateSolidBrush(background);
+    ApplyDwmFrame(g.settingsWindow);
     RedrawWindow(g.settingsWindow, nullptr, nullptr,
                  RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN);
 }
@@ -1729,25 +1342,20 @@ void LayoutSettingsControls() {
     RECT client{};
     GetClientRect(g.settingsWindow, &client);
     int margin = SettingsScale(18);
+    int header = SettingsScale(34);
     int width = RectWidth(client) - margin * 2;
-    MoveWindow(g.startupLabel, margin, SettingsScale(18), width - SettingsScale(52),
+    MoveWindow(g.startupLabel, margin, header + SettingsScale(18), width - SettingsScale(52),
                SettingsScale(24), TRUE);
-    MoveWindow(g.startupButton, client.right - margin - SettingsScale(36), SettingsScale(20),
+    MoveWindow(g.startupButton, client.right - margin - SettingsScale(36), header + SettingsScale(20),
                SettingsScale(36), SettingsScale(20), TRUE);
-    int footerTop = SettingsScale(60);
+    int footerTop = header + SettingsScale(60);
     if (!g.settingsMessage.empty()) {
         // Only Windows restrictions and action failures need an explanation.
         // Measure it at the current DPI so it never consumes space when empty.
-        RECT textBounds = MakeRect(0, 0, width, 0);
-        HDC dc = GetDC(g.settingsWindow);
-        HGDIOBJ old = SelectObject(dc, g.settingsFont);
-        DrawTextW(dc, g.settingsMessage.c_str(), -1, &textBounds,
-                  DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
-        SelectObject(dc, old);
-        ReleaseDC(g.settingsWindow, dc);
-        int height = std::max(SettingsScale(20), RectHeight(textBounds));
-        MoveWindow(g.startupStatusLabel, margin, SettingsScale(52), width, height, TRUE);
-        footerTop = SettingsScale(52) + height + SettingsScale(12);
+        int height = std::max(SettingsScale(20),g.settingsRenderer.TextHeight(
+            g.settingsMessage,g.settingsFont,width,g.settingsDpi));
+        MoveWindow(g.startupStatusLabel, margin, header + SettingsScale(52), width, height, TRUE);
+        footerTop = header + SettingsScale(52) + height + SettingsScale(12);
     }
     // Align the icon and switch optically; the GitHub hit target stays generous
     // while its visible surface has no text, tile, or border.
@@ -1799,36 +1407,106 @@ void DrawSettingsButton(const DRAWITEMSTRUCT& item) {
     bool enabled = (item.itemState & ODS_DISABLED) == 0;
     bool pressed = (item.itemState & ODS_SELECTED) != 0;
     RECT rect = item.rcItem;
-    FillRect(item.hDC, &rect, g.settingsBackgroundBrush);
+    auto& dc = item.CtlID == kStartupButtonId ? g.startupRenderer : g.githubRenderer;
+    if(!dc.Begin(item.hwndItem,g.settingsDpi,rect,UseSoftwareRenderer())) return;
+    dc.Fill(rect,P().windowBackground);
     if (item.CtlID == kStartupButtonId) {
         bool on = g.startupStatus.state == StartupState::Enabled;
-        COLORREF fill = on ? RGB(15, 122, 96) : P().disabledButton;
+        COLORREF fill = on ? P().selectedBorder : P().disabledButton;
         if (pressed && enabled) fill = BlendCaptionColor(fill, P().mainText, 0.12);
-        FillRounded(item.hDC, rect, SettingsScale(20), fill);
-        StrokeRounded(item.hDC, rect, SettingsScale(20), SettingsScale(1),
+        FillRounded(dc, rect, SettingsScale(20), fill);
+        StrokeRounded(dc, rect, SettingsScale(20), SettingsScale(1),
                        enabled ? P().hoverBorder : P().disabledButtonBorder);
         int knob = SettingsScale(14);
         int left = on ? rect.right - SettingsScale(3) - knob : rect.left + SettingsScale(3);
         int top = rect.top + (RectHeight(rect) - knob) / 2;
         RECT knobRect = MakeRect(left, top, left + knob, top + knob);
-        FillRounded(item.hDC, knobRect, knob, on ? RGB(245, 248, 252) : P().mutedText);
+        FillRounded(dc, knobRect, knob, on ? (HighContrastEnabled() ? P().buttonText : RGB(245,248,252)) : P().mutedText);
     } else {
-        HBITMAP icon = g.darkMode ? g.githubDarkIcon : g.githubLightIcon;
-        DrawSvgBitmap(item.hDC, icon, rect, pressed ? SettingsScale(1) : 0);
+        dc.Icon(VectorIcon::GitHub,rect,P().mainText,20,pressed ? 1.f : 0.f);
     }
     if ((item.itemState & ODS_FOCUS) && !(item.itemState & ODS_NOFOCUSRECT)) {
         RECT focus = rect;
         InflateRect(&focus, -SettingsScale(2), -SettingsScale(2));
         bool switchOn = item.CtlID == kStartupButtonId &&
                         g.startupStatus.state == StartupState::Enabled;
-        StrokeRounded(item.hDC, focus,
+        StrokeRounded(dc, focus,
             item.CtlID == kStartupButtonId ? SettingsScale(16) : SettingsScale(6),
             SettingsScale(1), switchOn ? RGB(245, 248, 252) : P().selectedBorder);
     }
+    if(dc.End()==D2DERR_RECREATE_TARGET) InvalidateRect(item.hwndItem,nullptr,FALSE);
+}
+
+LRESULT CALLBACK SettingsLabelProcedure(HWND hwnd, UINT message, WPARAM wp, LPARAM lp,
+                                        UINT_PTR, DWORD_PTR) {
+    auto& dc=hwnd==g.startupLabel ? g.startupLabelRenderer : g.statusRenderer;
+    if(message==WM_ERASEBKGND) return 1;
+    if(message==WM_PAINT) {
+        PAINTSTRUCT paint{};BeginPaint(hwnd,&paint);RECT rect{};GetClientRect(hwnd,&rect);
+        wchar_t text[2048]{};GetWindowTextW(hwnd,text,static_cast<int>(std::size(text)));
+        if(dc.Begin(hwnd,g.settingsDpi,paint.rcPaint,UseSoftwareRenderer())) {
+            dc.Fill(rect,P().windowBackground);
+            dc.Text(text,rect,g.settingsFont,hwnd==g.startupLabel ? P().mainText : P().mutedText,
+                hwnd==g.startupLabel ? DT_LEFT|DT_SINGLELINE|DT_VCENTER : DT_LEFT|DT_WORDBREAK);
+            if(dc.End()==D2DERR_RECREATE_TARGET) InvalidateRect(hwnd,nullptr,FALSE);
+        }
+        EndPaint(hwnd,&paint);return 0;
+    }
+    if(message==WM_NCDESTROY) dc.Discard();
+    return DefSubclassProc(hwnd,message,wp,lp);
+}
+
+LRESULT CALLBACK SettingsButtonProcedure(HWND hwnd, UINT message, WPARAM wp, LPARAM lp,
+                                         UINT_PTR, DWORD_PTR) {
+    if(message==WM_GETOBJECT && static_cast<LONG>(lp)==UiaRootObjectId)
+        return AutomationObject(hwnd,wp,lp,hwnd==g.startupButton);
+    if(message==WM_ERASEBKGND) return 1;
+    if(message==WM_NCDESTROY) {
+        (hwnd==g.startupButton ? g.startupRenderer : g.githubRenderer).Discard();
+        RemovePropW(hwnd,L"WindowCue.ToggleState");
+    }
+    return DefSubclassProc(hwnd,message,wp,lp);
 }
 
 LRESULT CALLBACK SettingsProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
+    case WM_NCCALCSIZE:
+        if(wParam) return 0;
+        break;
+    case WM_NCPAINT: return 0;
+    case WM_NCHITTEST: {
+        POINT p{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};ScreenToClient(hwnd,&p);
+        RECT r{};GetClientRect(hwnd,&r);
+        if(p.y<SettingsScale(34) && p.x<r.right-SettingsScale(40)) return HTCAPTION;
+        return HTCLIENT;
+    }
+    case WM_LBUTTONUP: {
+        RECT r{};GetClientRect(hwnd,&r);
+        POINT p{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};
+        bool close=g.settingsClosePressed && p.y>=0 && p.y<SettingsScale(34) &&
+                   p.x>=r.right-SettingsScale(40) && p.x<r.right;
+        g.settingsClosePressed=false;ReleaseCapture();
+        InvalidateRect(hwnd,nullptr,FALSE);
+        if(close) SendMessageW(hwnd,WM_CLOSE,0,0);
+        return 0;
+    }
+    case WM_LBUTTONDOWN: {
+        RECT r{};GetClientRect(hwnd,&r);POINT p{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};
+        if(p.y<SettingsScale(34) && p.x>=r.right-SettingsScale(40)) {
+            g.settingsClosePressed=true;SetCapture(hwnd);InvalidateRect(hwnd,nullptr,FALSE);
+        }
+        return 0;
+    }
+    case WM_MOUSEMOVE: {
+        RECT r{};GetClientRect(hwnd,&r);POINT p{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};
+        bool hot=p.y>=0 && p.y<SettingsScale(34) && p.x>=r.right-SettingsScale(40) && p.x<r.right;
+        if(hot!=g.settingsCloseHot) {g.settingsCloseHot=hot;InvalidateRect(hwnd,nullptr,FALSE);}
+        TRACKMOUSEEVENT track{sizeof(track),TME_LEAVE,hwnd,0};TrackMouseEvent(&track);return 0;
+    }
+    case WM_MOUSELEAVE:
+        g.settingsCloseHot=false;InvalidateRect(hwnd,nullptr,FALSE);return 0;
+    case WM_CAPTURECHANGED:
+        g.settingsClosePressed=false;InvalidateRect(hwnd,nullptr,FALSE);return 0;
     case WM_CREATE:
         g.settingsWindow = hwnd;
         g.settingsDpi = QueryWindowDpi(hwnd);
@@ -1836,6 +1514,8 @@ LRESULT CALLBACK SettingsProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARA
             0, 0, 0, 0, hwnd, nullptr, g.instance, nullptr);
         g.startupStatusLabel = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_NOPREFIX,
             0, 0, 0, 0, hwnd, nullptr, g.instance, nullptr);
+        SetWindowSubclass(g.startupLabel,SettingsLabelProcedure,1,0);
+        SetWindowSubclass(g.startupStatusLabel,SettingsLabelProcedure,1,0);
         g.startupButton = CreateWindowW(L"BUTTON", T().startup,
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
             0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStartupButtonId)),
@@ -1844,6 +1524,8 @@ LRESULT CALLBACK SettingsProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARA
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
             0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kGitHubButtonId)),
             g.instance, nullptr);
+        SetWindowSubclass(g.startupButton,SettingsButtonProcedure,2,0);
+        SetWindowSubclass(g.githubButton,SettingsButtonProcedure,2,0);
         RefreshSettingsResources();
         ApplySettingsTheme();
         RefreshStartupControls();
@@ -1879,23 +1561,22 @@ LRESULT CALLBACK SettingsProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARA
     case WM_DRAWITEM:
         DrawSettingsButton(*reinterpret_cast<DRAWITEMSTRUCT*>(lParam));
         return TRUE;
-    case WM_CTLCOLORSTATIC: {
-        HDC dc = reinterpret_cast<HDC>(wParam);
-        SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, reinterpret_cast<HWND>(lParam) == g.startupLabel ?
-                     P().mainText : P().mutedText);
-        return reinterpret_cast<LRESULT>(g.settingsBackgroundBrush);
-    }
-    case WM_ERASEBKGND: {
-        RECT rect{};
-        GetClientRect(hwnd, &rect);
-        FillRect(reinterpret_cast<HDC>(wParam), &rect, g.settingsBackgroundBrush);
-        return 1;
-    }
+    case WM_ERASEBKGND: return 1;
     case WM_PAINT: {
         PAINTSTRUCT paint{};
-        HDC dc = BeginPaint(hwnd, &paint);
-        FillRect(dc, &paint.rcPaint, g.settingsBackgroundBrush);
+        BeginPaint(hwnd, &paint);
+        RECT r{};GetClientRect(hwnd,&r);
+        auto& dc=g.settingsRenderer;
+        if(dc.Begin(hwnd,g.settingsDpi,paint.rcPaint,UseSoftwareRenderer())) {
+            dc.Fill(r,P().windowBackground);
+            dc.Text(T().settings,MakeRect(SettingsScale(12),0,r.right-SettingsScale(44),SettingsScale(34)),
+                g.settingsFont,P().titleText,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+            RECT close=MakeRect(r.right-SettingsScale(40),0,r.right,SettingsScale(34));
+            if(g.settingsCloseHot) dc.Fill(close,RGB(196,43,44));
+            dc.Icon(VectorIcon::Close,close,g.settingsCloseHot ? RGB(255,255,255) : P().mainText,14);
+            dc.Stroke(r,0,1,P().inactiveWindowBorder);
+            if(dc.End()==D2DERR_RECREATE_TARGET) InvalidateRect(hwnd,nullptr,FALSE);
+        }
         EndPaint(hwnd, &paint);
         return 0;
     }
@@ -1905,12 +1586,9 @@ LRESULT CALLBACK SettingsProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARA
         return 0;
     case WM_DESTROY:
         if (g.settingsFont) DeleteObject(g.settingsFont);
-        if (g.settingsBackgroundBrush) DeleteObject(g.settingsBackgroundBrush);
-        if (g.githubDarkIcon) DeleteObject(g.githubDarkIcon);
-        if (g.githubLightIcon) DeleteObject(g.githubLightIcon);
+        g.settingsRenderer.Shutdown();g.startupRenderer.Shutdown();g.githubRenderer.Shutdown();
+        g.startupLabelRenderer.Shutdown();g.statusRenderer.Shutdown();
         g.settingsFont = nullptr;
-        g.settingsBackgroundBrush = nullptr;
-        g.githubDarkIcon = g.githubLightIcon = nullptr;
         g.settingsWindow = g.startupButton = g.githubButton = nullptr;
         g.startupLabel = g.startupStatusLabel = nullptr;
         g.settingsMessage.clear();
@@ -1929,8 +1607,8 @@ void ShowSettingsWindow() {
         wc.lpszClassName = kSettingsClass;
         wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         RegisterClassW(&wc);
-        RECT size = MakeRect(0, 0, Scale(kSettingsWidth), Scale(kSettingsHeight));
-        constexpr DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU;
+        RECT size = MakeRect(0, 0, Scale(kSettingsWidth), Scale(kSettingsHeight+34));
+        constexpr DWORD style = WS_POPUP | WS_SYSMENU;
         using AdjustForDpi = BOOL(WINAPI*)(LPRECT, DWORD, BOOL, DWORD, UINT);
         auto adjust = reinterpret_cast<AdjustForDpi>(GetProcAddress(
             GetModuleHandleW(L"user32.dll"), "AdjustWindowRectExForDpi"));
@@ -1987,18 +1665,28 @@ void ToggleTheme() {
     g.darkMode = !g.darkMode;
     UpdateCaptionTooltipText();
     SaveDarkModePreference(g.darkMode);
-    ApplyDwmFrame(g.hwnd);
     ApplySettingsTheme();
-    SetWindowPos(g.hwnd, nullptr, 0, 0, 0, 0,
-                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE |
-                 SWP_NOZORDER | SWP_NOACTIVATE);
     RedrawWindow(g.hwnd, nullptr, nullptr,
                  RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN);
+}
+
+int CaptionButtonAt(POINT client) {
+    return PointInside(g.minButtonRect,client) ? 1 : PointInside(g.maxButtonRect,client) ? 2 :
+           PointInside(g.closeButtonRect,client) ? 3 : 0;
+}
+void InvokeCaptionButton(int id) {
+    if(id==1) SendMessageW(g.hwnd,WM_SYSCOMMAND,SC_MINIMIZE,0);
+    if(id==2) SendMessageW(g.hwnd,WM_SYSCOMMAND,IsZoomed(g.hwnd)?SC_RESTORE:SC_MAXIMIZE,0);
+    if(id==3) SendMessageW(g.hwnd,WM_CLOSE,0,0);
 }
 
 LRESULT HitTest(POINT screenPoint) {
     POINT client = screenPoint;
     ScreenToClient(g.hwnd, &client);
+    LRESULT border=ResizeBorderHit(g.hwnd,g.dpi,client);
+    if(border!=HTNOWHERE) return border;
+    int button=CaptionButtonAt(client);
+    if(button) return button==1 ? HTMINBUTTON : button==2 ? HTMAXBUTTON : HTCLOSE;
     if (PointInside(g.themeButtonRect, client) ||
         PointInside(g.settingsButtonRect, client)) return HTCLIENT;
     if (client.y < Scale(34)) {
@@ -2013,16 +1701,14 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         AddTrayIcon();
         return 0;
     }
-    LRESULT dwmResult = 0;
-    BOOL dwmHandled = DwmDefWindowProc(hwnd, message, wParam, lParam, &dwmResult);
-    if (message == WM_NCHITTEST && dwmHandled) return dwmResult;
-
     switch (message) {
+    case WM_NCPAINT: return 0;
+    case WM_NCACTIVATE:
+        return DefWindowProcW(hwnd,message,wParam,-1);
     case WM_NCCALCSIZE:
         if (wParam) return 0;
         break;
     case WM_NCHITTEST: {
-        if (dwmHandled) return dwmResult;
         POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         return HitTest(point);
     }
@@ -2030,11 +1716,13 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
         info->ptMinTrackSize.x = Scale(760);
         info->ptMinTrackSize.y = Scale(310);
+        SetMaximizedWorkArea(hwnd,*info);
         return 0;
     }
     case WM_CREATE:
         g.hwnd = hwnd;
         g.dpi = QueryWindowDpi(hwnd);
+        RefreshSystemTheme();
         CreateFonts();
         RefreshThemeIcons();
         CreateCaptionTooltips();
@@ -2045,8 +1733,11 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
                      SWP_NOZORDER | SWP_NOACTIVATE);
         return 0;
     case WM_THEMECHANGED:
+    case WM_SYSCOLORCHANGE:
+        RefreshSystemTheme();
         ApplyDwmFrame(hwnd);
-        InvalidateRect(hwnd, &g.titleRect, FALSE);
+        ApplySettingsTheme();
+        InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     case WM_SIZE:
         if (wParam == SIZE_MINIMIZED) ResetCaptionInteraction();
@@ -2075,7 +1766,10 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         UpdateThumbnails();
         return 0;
     case WM_SETTINGCHANGE:
+        RefreshSystemTheme();
         RefreshCaptionAnimationPolicy();
+        ApplySettingsTheme();
+        InvalidateRect(hwnd,nullptr,FALSE);
         if (wParam == SPI_SETWORKAREA) {
             ResizeForContent();
             Layout();
@@ -2091,15 +1785,53 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         return 1;
     case WM_PAINT: {
         PAINTSTRUCT paint{};
+        auto region=WindowPaintRegion(hwnd);
         HDC dc = BeginPaint(hwnd, &paint);
         Layout();
-        DrawInterface(dc, paint.rcPaint);
+        DrawInterface(dc, paint.rcPaint,region);
         EndPaint(hwnd, &paint);
         UpdateThumbnails();
         return 0;
     }
+    case WM_GETTITLEBARINFOEX: {
+        auto* info=reinterpret_cast<TITLEBARINFOEX*>(lParam);
+        if(!info || info->cbSize!=sizeof(*info)) return 0;
+        info->rcTitleBar=g.titleRect;
+        MapWindowPoints(hwnd,nullptr,reinterpret_cast<POINT*>(&info->rcTitleBar),2);
+        for(int i=0;i<6;++i) { info->rgstate[i]=STATE_SYSTEM_INVISIBLE;info->rgrect[i]={}; }
+        info->rgstate[0]=0;
+        int indexes[]={2,3,5};RECT rects[]={g.minButtonRect,g.maxButtonRect,g.closeButtonRect};
+        for(int i=0;i<3;++i) { info->rgstate[indexes[i]]=STATE_SYSTEM_FOCUSABLE;
+            info->rgrect[indexes[i]]=rects[i];
+            MapWindowPoints(hwnd,nullptr,reinterpret_cast<POINT*>(&info->rgrect[indexes[i]]),2); }
+        return 0;
+    }
+    case WM_NCMOUSEMOVE: {
+        POINT p{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};ScreenToClient(hwnd,&p);
+        int hot=CaptionButtonAt(p);
+        if(hot!=g.captionHot) { g.captionHot=hot;InvalidateRect(hwnd,&g.titleRect,FALSE); }
+        TRACKMOUSEEVENT tracking{sizeof(tracking),TME_LEAVE|TME_NONCLIENT,hwnd,0};TrackMouseEvent(&tracking);
+        // DefWindowProc receives HTMAXBUTTON to preserve the OS snap-menu path.
+        return DefWindowProcW(hwnd,message,wParam,lParam);
+    }
+    case WM_NCMOUSELEAVE:
+        g.captionHot=0;InvalidateRect(hwnd,&g.titleRect,FALSE);return 0;
+    case WM_NCLBUTTONDOWN: {
+        POINT p{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};ScreenToClient(hwnd,&p);
+        int id=CaptionButtonAt(p);
+        if(id) {g.captionPressed=id;SetCapture(hwnd);InvalidateRect(hwnd,&g.titleRect,FALSE);return 0;}
+        break;
+    }
+    case WM_NCLBUTTONUP: {
+        POINT p{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};ScreenToClient(hwnd,&p);
+        int id=CaptionButtonAt(p),pressed=g.captionPressed;g.captionPressed=0;ReleaseCapture();
+        if(id && id==pressed) InvokeCaptionButton(id);
+        InvalidateRect(hwnd,&g.titleRect,FALSE);return 0;
+    }
     case WM_MOUSEMOVE: {
         POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        if(g.captionPressed) {g.captionHot=CaptionButtonAt(point);InvalidateRect(hwnd,&g.titleRect,FALSE);return 0;}
+        if(g.captionHot) {g.captionHot=0;InvalidateRect(hwnd,&g.titleRect,FALSE);}
         if (g.draggingScrollbar) {
             int trackTravel = RectHeight(g.scrollbarRect) - RectHeight(g.scrollbarThumb);
             if (trackTravel > 0 && g.maxScroll > 0) {
@@ -2176,6 +1908,11 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
     }
     case WM_LBUTTONUP: {
         POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        if(g.captionPressed) {
+            int id=g.captionPressed;g.captionPressed=0;ReleaseCapture();
+            if(CaptionButtonAt(point)==id) InvokeCaptionButton(id);
+            InvalidateRect(hwnd,&g.titleRect,FALSE);return 0;
+        }
         if (g.settingsButtonPressed) {
             bool open = PointInside(g.settingsButtonRect, point);
             g.settingsButtonPressed = false;
@@ -2206,6 +1943,8 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         return 0;
     }
     case WM_CAPTURECHANGED:
+        if(g.captionPressed) InvalidateRect(hwnd,&g.titleRect,FALSE);
+        g.captionPressed=0;
         g.draggingScrollbar = false;
         if (g.settingsButtonPressed) InvalidateRect(hwnd, &g.settingsButtonRect, FALSE);
         if (g.themeButtonPressed) InvalidateRect(hwnd, &g.themeButtonRect, FALSE);
@@ -2272,7 +2011,10 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         return 0;
     }
     case WM_TIMER:
-        if (wParam == kCaptionAnimationTimer) {
+        if(wParam==kRenderRetryTimer) {
+            KillTimer(hwnd,kRenderRetryTimer);++g.renderRetries;
+            if(IsWindowVisible(hwnd) && !IsIconic(hwnd)) InvalidateRect(hwnd,nullptr,FALSE);
+        } else if (wParam == kCaptionAnimationTimer) {
             if (!IsWindowVisible(hwnd) || IsIconic(hwnd)) {
                 ResetCaptionInteraction();
                 return 0;
@@ -2318,18 +2060,21 @@ LRESULT CALLBACK WindowProcedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         KillTimer(hwnd, kThumbnailTimer);
         KillTimer(hwnd, kRefreshTimer);
         KillTimer(hwnd, kTrayRetryTimer);
+        KillTimer(hwnd, kRenderRetryTimer);
         if (g.settingsWindow) DestroyWindow(g.settingsWindow);
         UnregisterAllBindings();
         Shell_NotifyIconW(NIM_DELETE, &g.tray);
         ReleaseWindows(g.windows);
         DeleteFonts();
         DeleteThemeIcons();
+        g.renderer.Shutdown();
         if (g.appIcon) DestroyIcon(g.appIcon);
-        g.appIcon = nullptr;
+        if (g.appLargeIcon) DestroyIcon(g.appLargeIcon);
+        g.appLargeIcon = g.appIcon = nullptr;
         PostQuitMessage(0);
         return 0;
     }
-    return dwmHandled ? dwmResult : DefWindowProcW(hwnd, message, wParam, lParam);
+    return DefWindowProcW(hwnd, message, wParam, lParam);
 }
 
 void EnableDpiAwareness() {
@@ -2460,22 +2205,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         CoUninitialize();
         return passed ? 0 : 4;
     }
-    if (CommandLineHasOption(L"--svg-self-test")) {
-        const int resources[] = {IDR_SUN_SVG, IDR_MOON_SVG,
-            IDR_SETTINGS_DARK_SVG, IDR_SETTINGS_LIGHT_SVG,
-            IDR_GITHUB_DARK_SVG, IDR_GITHUB_LIGHT_SVG};
-        const int sizes[] = {18, 23, 27, 36};
-        bool rendered = true;
-        for (int resource : resources) {
-            bool centered = resource == IDR_SUN_SVG || resource == IDR_SETTINGS_DARK_SVG ||
-                            resource == IDR_SETTINGS_LIGHT_SVG;
-            for (int size : sizes) {
-                bool valid = ValidateSvgResourceLayout(instance, resource, size, centered);
-                rendered = rendered && valid;
-            }
-        }
-        CoUninitialize();
-        return rendered ? 0 : 3;
+    if(CommandLineHasOption(L"--svg-self-test") || CommandLineHasOption(L"--render-self-test")) {
+        // Preserve the old CLI alias for build scripts, validating the actual
+        // vector geometry instead of the removed raster icon pipeline.
+        RenderContext renderer;
+        bool valid=renderer.ValidateGeometry() && ValidateThemePalettes();
+        renderer.Shutdown();
+        CoUninitialize();return valid ? 0 : 3;
     }
     bool alreadyRunning = false;
     HANDLE instanceMutex = AcquireInstanceMutex(alreadyRunning);
@@ -2490,7 +2226,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     } mutexLifetime{instanceMutex};
     g.taskbarCreatedMessage = RegisterWindowMessageW(L"TaskbarCreated");
     g.appIcon = static_cast<HICON>(LoadImageW(
-        instance, MAKEINTRESOURCEW(IDI_WINDOWCUE), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE));
+        instance, MAKEINTRESOURCEW(IDI_WINDOWCUE), IMAGE_ICON, 32, 32, 0));
+    g.appLargeIcon = static_cast<HICON>(LoadImageW(
+        instance, MAKEINTRESOURCEW(IDI_WINDOWCUE), IMAGE_ICON, 256, 256, 0));
 
     WNDCLASSEXW windowClass{sizeof(windowClass)};
     windowClass.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
@@ -2518,7 +2256,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     int top = work.top + (RectHeight(work) - height) / 2;
     HWND hwnd = CreateWindowExW(
         WS_EX_APPWINDOW, kWindowClass, L"WindowCue",
-        WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX,
+        kMainWindowStyle,
         left, top, width, height, nullptr, nullptr, instance, nullptr);
     if (!hwnd) {
         if (g.appIcon) DestroyIcon(g.appIcon);

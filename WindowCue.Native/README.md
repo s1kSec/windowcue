@@ -4,7 +4,7 @@
 
 ## 目标
 
-- C++17 + Win32 + GDI + DWM Thumbnail API；
+- C++17 + Win32 + Direct2D + DirectWrite + DWM Thumbnail API；
 - 最低支持 Windows 10 1809（17763）x64；
 - 不使用 Qt、MFC、.NET、WebView 或任何第三方运行库；
 - 使用 `/MT` 静态链接 Microsoft C/C++ 运行时，发布结果为独立 EXE；
@@ -12,6 +12,12 @@
 - 与现有版本共用 `%LocalAppData%\WindowCue\bindings.json`。
 
 测试可通过进程环境变量 `WINDOWCUE_SETTINGS_DIR` 覆盖配置目录；设置该变量时，自启动后端同时改用 `HKCU\Software\WindowCue\StartupTests\<目录哈希>` 的隔离注册表子树，绝不写入真实登录启动项，因此不应将该测试变量当作生产自启动的自定义配置方案。
+
+## 2026-10-23：1.1.0.0 矢量渲染候选
+
+主界面及设置直接使用矢量形状与文字，不再使用 UI 图标 HBITMAP、GDI 圆角和玻璃标题栏叠加。`RenderContext.h`、`Theme.h`、`WindowChrome.h`、`Automation.h` 分别负责渲染、语义主题、窗口边界和无障碍；DWM 预览保留原生关系，复杂脏区显式传入 D2D。
+
+完整实现、测试及未完成的跨系统验收见 [改造记录](../docs/RenderingImplementation-1.1.0.0.md)。`--render-self-test` 验证当前矢量路径及主题对比度；旧 `--svg-self-test` 为兼容别名。历史 `Build-IconVisual.ps1` 检查旧位图诊断实现，不能代表当前产品渲染验收；使用新的 `Build-VectorPreview.ps1` 和更新后的 `Build-CaptionVisual.ps1` 检查当前实现。
 
 ## 2026-10-13：1.0.4.0 紧凑设置
 

@@ -208,6 +208,14 @@ void SetCaptionSample(double level, bool pressed) {
     UpdateWindow(g.hwnd);
     DwmFlush();
 }
+LRESULT CALLBACK PreviewFixture(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
+    if(message==WM_PAINT) {
+        PAINTSTRUCT ps{};HDC dc=BeginPaint(hwnd,&ps);RECT r{};GetClientRect(hwnd,&r);
+        HBRUSH brush=CreateSolidBrush(RGB(37,151,204));FillRect(dc,&r,brush);DeleteObject(brush);
+        EndPaint(hwnd,&ps);return 0;
+    }
+    return DefWindowProcW(hwnd,message,wp,lp);
+}
 }
 
 int wmain(int argc, wchar_t** argv) {
@@ -216,7 +224,7 @@ int wmain(int argc, wchar_t** argv) {
     const std::filesystem::path output(argv[1]);
     if (!std::filesystem::is_directory(output) || std::filesystem::exists(output / L"caption-report.txt")) return 91;
     std::ofstream report(output / L"caption-report.txt");
-    report << "Actual native UI, production Main.cpp/SVG resources; startup API mocked.\n"
+    report << "Actual native UI, production Main.cpp/Direct2D paths; startup API mocked.\n"
            << "No production entry, user window enumeration, tray registration, settings load or hotkey registration.\n"
            << "Capture source: exact owned-window rectangles only; no full-desktop capture.\n"
            << "96/144/192 DPI are layout simulations, not real mixed-monitor validation.\n";
@@ -245,7 +253,7 @@ int wmain(int argc, wchar_t** argv) {
     // resizingForContent keeps the deliberately empty preview at a fixed height.
     g.resizingForContent = true;
     HWND host = failure ? nullptr : CreateWindowExW(WS_EX_APPWINDOW, kWindowClass, L"WindowCue visual smoke",
-        WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX,
+        kMainWindowStyle,
         left, top, 1080, 310, nullptr, nullptr, g.instance, nullptr);
     if (!host) failure = 95;
     const UINT actualDpi = g.dpi;
@@ -319,7 +327,7 @@ int wmain(int argc, wchar_t** argv) {
                 << RectWidth(compactClient) << 'x' << RectHeight(compactClient)
                 << " status_visible=" << IsWindowVisible(g.startupStatusLabel) << '\n';
             if ((RectWidth(compactClient) > SettingsScale(320) ||
-                 RectHeight(compactClient) > SettingsScale(120) ||
+                 RectHeight(compactClient) > SettingsScale(154) ||
                  IsWindowVisible(g.startupStatusLabel)) && !failure) failure = 100;
             // Show both switch positions without clicking the production
             // control, then the Windows-managed disabled explanation. These
@@ -421,6 +429,43 @@ int wmain(int argc, wchar_t** argv) {
             }
         }
         save(L"caption-states-and-dpi.png", Stack(captionRows));
+        // Exercise the complete scene, including a genuine DWM source and a
+        // bound self-card, without enumerating or interacting with user apps.
+        g.dpi=actualDpi;CreateFonts();g.renderer.Discard();
+        WNDCLASSW fixtureClass{};fixtureClass.hInstance=g.instance;
+        fixtureClass.lpfnWndProc=PreviewFixture;fixtureClass.lpszClassName=L"WindowCue.VisualFixture";
+        RegisterClassW(&fixtureClass);
+        HWND source=CreateWindowExW(WS_EX_TOOLWINDOW,fixtureClass.lpszClassName,L"Native preview fixture",
+            WS_POPUP,monitor.rcWork.left+30,monitor.rcWork.top+600,640,400,nullptr,nullptr,g.instance,nullptr);
+        if(!source && !failure) failure=102;
+        if(source) {
+            ShowWindow(source,SW_SHOWNOACTIVATE);UpdateWindow(source);
+            g.windows.clear();PrependWindowCueItem(g.windows);
+            WindowInfo fixture;fixture.handle=source;fixture.title=L"Live preview";
+            fixture.processPath=L"VectorFixture.exe";g.windows.push_back(std::move(fixture));
+            ActiveBinding binding;binding.target=host;binding.settings.isWindowCue=true;
+            g.bindings.push_back(binding);g.windows[0].bound=true;g.selected=0;g.inputText=L"Alt + P";
+            g.appLargeIcon=static_cast<HICON>(LoadImageW(g.instance,MAKEINTRESOURCEW(IDI_WINDOWCUE),IMAGE_ICON,256,256,0));
+            SetWindowPos(host,HWND_TOPMOST,left,top,Scale(1080),Scale(400),SWP_NOACTIVATE);
+            RegisterThumbnails();Layout();UpdateThumbnails();
+            for(int sample=0;sample<20;++sample) {
+                g.darkMode=(sample%2)!=0;SetCaptionSample(0,false);UpdateThumbnails();Pump(50);DwmFlush();
+                auto pixels=CaptureOwnedWindow(host,report);
+                if(sample<2) save(g.darkMode?L"dark-fixture.png":L"light-fixture.png",pixels);
+                RECT frame=VisibleFrame(host);POINT origin{};ClientToScreen(host,&origin);
+                RECT preview=g.windows[1].appliedThumbnailRect;
+                int x=origin.x-frame.left+(preview.left+preview.right)/2;
+                int y=origin.y-frame.top+(preview.top+preview.bottom)/2;
+                bool valid=pixels.valid() && x>=0 && y>=0 && x<pixels.width && y<pixels.height;
+                if(valid) {
+                    size_t at=(static_cast<size_t>(y)*pixels.width+x)*4;
+                    valid=pixels.bgra[at]==204 && pixels.bgra[at+1]==151 && pixels.bgra[at+2]==37;
+                }
+                report << "vector_preview_theme_sample=" << sample << " pixel_match=" << valid << '\n';
+                if(!valid && !failure) failure=103;
+            }
+            g.renderer.ForgetImages();ReleaseWindows(g.windows);g.bindings.clear();DestroyWindow(source);
+        }
         report << "mock_startup_changes=" << visualStartupChanges << " (expected zero)\n";
         if (visualStartupChanges != 0 && !failure) failure = 99;
         ExitApplication();

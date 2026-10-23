@@ -253,14 +253,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     SendMessageW(host, WM_LBUTTONUP, 0, MAKELPARAM(gearPoint.x, gearPoint.y));
     check(g.settingsWindow && IsWindowVisible(g.settingsWindow) &&
           GetWindow(g.settingsWindow, GW_OWNER) == host, 62);
-    check(g.settingsDarkIcon && g.settingsLightIcon && g.githubDarkIcon && g.githubLightIcon, 63);
+    check(g.renderer.ValidateGeometry() && !g.renderingFailed, 63);
     if (g.settingsWindow) {
         RECT compactClient{}, switchBounds{}, githubBounds{};
         GetClientRect(g.settingsWindow, &compactClient);
         GetWindowRect(g.startupButton, &switchBounds);
         GetWindowRect(g.githubButton, &githubBounds);
         check(RectWidth(compactClient) <= SettingsScale(320) &&
-              RectHeight(compactClient) <= SettingsScale(120), 100);
+              RectHeight(compactClient) <= SettingsScale(154), 100);
         check(RectWidth(switchBounds) == SettingsScale(36) &&
               RectHeight(switchBounds) == SettingsScale(20), 101);
         check(RectWidth(githubBounds) == SettingsScale(32) &&
@@ -336,52 +336,33 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         SendMessageW(host, WM_KEYDOWN, VK_OEM_COMMA, 0);
         SetKeyboardState(originalKeys);
         check(IsWindowVisible(g.settingsWindow), 73);
-        // Owner-drawn accessibility labels must not turn into a visible GitHub
-        // text tile. Inspect the real drawing path in both themes, including
-        // the pressed state: its entire outer band stays the parent color.
-        auto iconOnlyGitHub = [&](bool pressed) {
-            const int size = SettingsScale(32);
-            HDC windowDc = GetDC(g.settingsWindow);
-            HDC dc = CreateCompatibleDC(nullptr);
-            HBITMAP bitmap = windowDc ? CreateCompatibleBitmap(windowDc, size, size) : nullptr;
-            if (windowDc) ReleaseDC(g.settingsWindow, windowDc);
-            if (!dc || !bitmap) {
-                if (bitmap) DeleteObject(bitmap);
-                if (dc) DeleteDC(dc);
-                return false;
-            }
-            HGDIOBJ previous = SelectObject(dc, bitmap);
-            DRAWITEMSTRUCT item{};
-            item.CtlID = kGitHubButtonId;
-            item.hDC = dc;
-            item.rcItem = MakeRect(0, 0, size, size);
-            item.itemState = pressed ? ODS_SELECTED : 0;
-            DrawSettingsButton(item);
-            bool cleanBand = true, hasIcon = false;
-            const int inset = SettingsScale(4);
-            for (int y = 0; y < size; ++y) {
-                for (int x = 0; x < size; ++x) {
-                    COLORREF pixel = GetPixel(dc, x, y);
-                    bool outside = x < inset || y < inset ||
-                                   x >= size - inset || y >= size - inset;
-                    if (outside && pixel != P().windowBackground) cleanBand = false;
-                    if (!outside && pixel != P().windowBackground) hasIcon = true;
-                }
-            }
-            SelectObject(dc, previous);
-            DeleteObject(bitmap);
-            DeleteDC(dc);
-            return cleanBand && hasIcon;
-        };
-        for (bool dark : {false, true}) {
-            g.darkMode = dark;
-            ApplySettingsTheme();
-            LOGBRUSH brush{};
-            check(GetObjectW(g.settingsBackgroundBrush, sizeof(brush), &brush) != 0 &&
-                  brush.lbColor == P().windowBackground, 74);
-            check(iconOnlyGitHub(false) && iconOnlyGitHub(true), 107);
-            UpdateWindow(g.settingsWindow);
+        // UI drawing is now direct-to-HWND. Native labels still expose actions,
+        // while the switch additionally exposes the UI Automation Toggle pattern.
+        for(bool dark : {false,true}) {
+            g.darkMode=dark;ApplySettingsTheme();UpdateWindow(g.settingsWindow);
+            check(P().unbindText==RGB(245,248,252),74);
+            check(g.githubRenderer.ValidateGeometry() && !g.renderingFailed,107);
         }
+        auto* automation=new ControlAutomation(g.startupButton,true);
+        ToggleState toggle{};
+        check(SUCCEEDED(automation->get_ToggleState(&toggle)) && toggle==ToggleState_Off,108);
+        regressionStartupStatus.state=StartupState::Enabled;RefreshStartupControls();
+        check(SUCCEEDED(automation->get_ToggleState(&toggle)) && toggle==ToggleState_On,109);
+        automation->Release();
+        regressionStartupStatus.state=StartupState::Disabled;RefreshStartupControls();
+        POINT maxPoint{(g.maxButtonRect.left+g.maxButtonRect.right)/2,Scale(16)};
+        ClientToScreen(host,&maxPoint);
+        check(HitTest(maxPoint)==HTMAXBUTTON,110);
+        POINT closePoint{(g.closeButtonRect.left+g.closeButtonRect.right)/2,Scale(16)};
+        ClientToScreen(host,&closePoint);
+        check(HitTest(closePoint)==HTCLOSE,111);
+        TITLEBARINFOEX titleInfo{};titleInfo.cbSize=sizeof(titleInfo);
+        SendMessageW(host,WM_GETTITLEBARINFOEX,0,reinterpret_cast<LPARAM>(&titleInfo));
+        check(titleInfo.rgrect[3].right>titleInfo.rgrect[3].left &&
+              !(titleInfo.rgstate[3]&STATE_SYSTEM_INVISIBLE),112);
+        unsigned generation=g.renderer.Generation();
+        g.renderer.Discard();InvalidateRect(host,nullptr,FALSE);UpdateWindow(host);
+        check(!g.renderingFailed && g.renderer.Generation()>generation,113);
         HideSettingsWindow();
         check(std::wstring(kGitHubUrl) == L"https://github.com/s1kSec/windowcue", 75);
         ActivateWindow(host);

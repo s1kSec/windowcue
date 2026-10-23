@@ -2,9 +2,13 @@
 
 此目录为 `WindowCue.Native` 提供独立的命令行 MSIX 构建、检查与本地测试流程。中文和英文分别生成一个只含对应语言 EXE 的包，不合并为双语言程序或双入口包。中文沿用正式 Partner Center 身份；英文正式身份尚未提供，只能使用 LocalTest 身份做开发验证。
 
+## 2026-10-23：1.1.0.0 矢量渲染候选
+
+共用版本配置已更新为 `1.1.0.0`。便携和 MSIX 构建改用直接矢量渲染，新增系统 DirectWrite/UI Automation 依赖检查；实际结果及安装验证边界见 [改造记录](../docs/RenderingImplementation-1.1.0.0.md)。当前不以构建通过替代 Windows 10 或已安装 MSIX 的显示验收。
+
 ## 2026-10-13：1.0.4.0 紧凑设置
 
-当前版本为 `1.0.4.0`。设置改为小尺寸无文字自启动开关和纯 GitHub 图标入口，移除静默驻留说明；Windows 禁用或操作异常时仍显示必要提示。中文正式身份、唯一的 `WindowCueStartup` 及默认启用清单保持一致。便携 ZIP 与中文未签名 Store 提交包共用版本配置，实际检查结果见 [VALIDATION.md](VALIDATION.md)。
+该版本为 `1.0.4.0`。设置改为小尺寸无文字自启动开关和纯 GitHub 图标入口，移除静默驻留说明；Windows 禁用或操作异常时仍显示必要提示。中文正式身份、唯一的 `WindowCueStartup` 及默认启用清单保持一致。便携 ZIP 与中文未签名 Store 提交包共用版本配置，实际检查结果见 [VALIDATION.md](VALIDATION.md)。
 
 ## 2026-10-13：1.0.3.0 图标与交互
 
