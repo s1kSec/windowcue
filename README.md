@@ -12,16 +12,28 @@ WindowCue 是 Windows 窗口快捷键工具：在实时预览列表中选择窗�
 - 默认使用 **Alt+P** 显示或隐藏 WindowCue，可在自身卡片中修改或取消。
 - 默认启动后静默驻留托盘；首次正常运行启用当前用户登录时自启动，可在齿轮设置中自由开关。
 - 支持明暗主题、列表滚动及高 DPI；亮色底色为 `#f5f8fc`，关闭或最小化后驻留系统托盘。
-- 标题栏主题按钮左侧提供 SVG 设置齿轮，设置中的 GitHub 图标打开项目仓库。
+- 标题栏主题按钮左侧提供矢量设置齿轮，设置中的 GitHub 图标打开项目仓库。
 - 绑定保存到本机；目标窗口关闭后，对应绑定会失效并被移除。
 
 ## 下载与安装
 
-系统要求：**Windows 10 1809（10.0.17763）及以上 x64，或 Windows 11 x64**。这是当前发布基线，与 MSIX 清单一致。主题图标使用 Windows Direct2D 原生 SVG 支持，不能按“所有 Windows 10 版本”理解兼容范围；参见 [Microsoft SVG 支持说明](https://learn.microsoft.com/en-us/windows/win32/direct2d/svg-support)。
+系统要求：**Windows 10 1809（10.0.17763）及以上 x64，或 Windows 11 x64**。这是当前发布基线，与 MSIX 清单一致。1.1 候选版本改用直接几何绘制，继续按该系统基线作为兼容目标，实际验证边界见改造记录。
 
 从 [GitHub Releases](https://github.com/s1kSec/windowcue/releases) 下载所需语言的 x64 便携版 ZIP，解压到可保留的位置，双击其中的 `WindowCue.exe`。ZIP 内包含运行文件和隐私文档；校验值见对应 Release 的说明及 `SHA256SUMS.txt`。便携版无需安装，设置仍默认保存到当前用户的本地应用数据目录。
 
 Microsoft Store 渠道正在准备：中文正式身份 MSIX 已可构建，**尚未上架或通过商店认证**；英文独立商店产品仍待补齐官方身份。GitHub Release 可附带明确标注的中文未签名 Store 提交包，供开发者提交 Partner Center 使用；普通用户使用便携 ZIP。未签名 MSIX 不能直接作为用户安装包，本地测试签名包和证书不随 Release 发布。
+
+## 2026-10-23：1.1.1.0 窗口边框修复候选
+
+修复 1.1.0.0 在点击、激活或改标题后闪出经典系统标题栏的问题：取消系统标题栏样式，保留 DWM 合成，由应用完整管理客户区；主窗口和设置都处理初始及后续客户区计算。检查在下一次界面重画前立即读取标题栏和四边像素，覆盖之前静态截图漏掉的瞬间。
+
+提供中英文便携 ZIP 和中文正式身份的未签名 Store 提交包。该版本仍为预发布候选，跨 Windows 10/11 实机及已安装 MSIX 的完整验收尚待补齐，详见 [边框修复记录](docs/ChromeFix-1.1.1.0.md)。
+
+## 2026-10-23：1.1.0.0 矢量渲染候选（已被 1.1.1.0 替代）
+
+界面改用 Direct2D 几何和 DirectWrite 文字直接绘制，统一主窗口/设置的主题、圆角及标题栏，移除产品中的 UI 位图合成路径，修正暗色取消绑定的文字对比度。保留实时 DWM 预览、紧凑设置、默认静默托盘及两种自启动后端。
+
+该版本后续发现经典外框闪现，已由 1.1.1.0 修复；当时的静态截图检查不足以证明激活过程没有闪烁。原始实现范围见 [改造记录](docs/RenderingImplementation-1.1.0.0.md)，设计依据见 [整改方案](docs/RenderingRemediation-2026-10-23.md)。
 
 ## 2026-10-13：1.0.4.0 紧凑设置
 
@@ -73,7 +85,7 @@ Microsoft Store 渠道正在准备：中文正式身份 MSIX 已可构建，**�
 & .\packaging\Build-Msix.ps1 -Language CN -Mode Store -RunSelfTests
 ```
 
-原生 EXE 输出到 `dist\WindowCue.Native\`；便携 ZIP、校验值和构建报告输出到 `dist\release\<运行标识>\`；MSIX 输出到 `packaging\output\`。当前源码及打包版本为 `1.0.4.0`，便携构建和 MSIX 构建共用 `packaging/partner-center.json` 的版本配置。MSIX 打包说明、身份配置、隔离测试及认证边界见 [packaging/README.md](packaging/README.md)。原生实现及回归程序构建见 [WindowCue.Native/README.md](WindowCue.Native/README.md)。
+原生 EXE 输出到 `dist\WindowCue.Native\`；便携 ZIP、校验值和构建报告输出到 `dist\release\<运行标识>\`；MSIX 输出到 `packaging\output\`。当前源码及打包版本为 `1.1.1.0`，便携构建和 MSIX 构建共用 `packaging/partner-center.json` 的版本配置。MSIX 打包说明、身份配置、隔离测试及认证边界见 [packaging/README.md](packaging/README.md)。原生实现及回归程序构建见 [WindowCue.Native/README.md](WindowCue.Native/README.md)。
 
 ## 仓库与反馈
 

@@ -65,7 +65,7 @@ RECT VisibleFrame(HWND window) {
     return bounds;
 }
 
-Pixels CaptureOwnedWindowOnce(HWND window, std::ofstream& report) {
+Pixels CaptureOwnedWindowOnce(HWND window, std::ofstream& report, bool settle = true) {
     DWORD process{};
     GetWindowThreadProcessId(window, &process);
     if (process != GetCurrentProcessId() || !IsWindowVisible(window)) return {};
@@ -74,11 +74,11 @@ Pixels CaptureOwnedWindowOnce(HWND window, std::ofstream& report) {
     // exact rectangle never captures an unrelated window that occludes ours.
     SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-    UpdateWindow(window);
+    if (settle) UpdateWindow(window);
     DwmFlush();
     // Let DWM finish the initial visible/z-order transition before validating
     // ownership at the capture points. No message pumping changes sample state.
-    Sleep(50);
+    if (settle) Sleep(50);
     RECT bounds = VisibleFrame(window);
     const int width = bounds.right - bounds.left, height = bounds.bottom - bounds.top;
     if (width <= 0 || height <= 0 || width > 8192 || height > 8192) return {};
@@ -208,6 +208,124 @@ void SetCaptionSample(double level, bool pressed) {
     UpdateWindow(g.hwnd);
     DwmFlush();
 }
+LRESULT CALLBACK PreviewFixture(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
+    if(message==WM_PAINT) {
+        PAINTSTRUCT ps{};HDC dc=BeginPaint(hwnd,&ps);RECT r{};GetClientRect(hwnd,&r);
+        HBRUSH brush=CreateSolidBrush(RGB(37,151,204));FillRect(dc,&r,brush);DeleteObject(brush);
+        EndPaint(hwnd,&ps);return 0;
+    }
+    return DefWindowProcW(hwnd,message,wp,lp);
+}
+
+// Sample immediately after each synchronous nonclient operation, BEFORE a
+// WM_PAINT can cover a system-drawn caption. Settled screenshots missed this.
+int CheckChromeTransitions(HWND host, IWICImagingFactory* factory,
+        const std::filesystem::path& output, std::ofstream& report) {
+    using namespace windowcue;
+    int failures{}, samples{};
+    auto geometry = [&](HWND window, const char* name) {
+        RECT outer{}, client{}; GetWindowRect(window,&outer); GetClientRect(window,&client);
+        POINT origin{}; ClientToScreen(window,&origin);
+        RECT proposed{10,20,810,420}, calculated=proposed;
+        SendMessageW(window,WM_NCCALCSIZE,FALSE,reinterpret_cast<LPARAM>(&calculated));
+        bool full=origin.x==outer.left && origin.y==outer.top &&
+            client.right==outer.right-outer.left && client.bottom==outer.bottom-outer.top;
+        bool initial=EqualRect(&calculated,&proposed)!=FALSE;
+        NCCALCSIZE_PARAMS resize{};resize.rgrc[0]=proposed;
+        SendMessageW(window,WM_NCCALCSIZE,TRUE,reinterpret_cast<LPARAM>(&resize));
+        bool subsequent=EqualRect(&resize.rgrc[0],&proposed)!=FALSE;
+        report << "chrome_geometry " << name << " full_client=" << full
+               << " initial_nccalc=" << initial << " resize_nccalc=" << subsequent << '\n';
+        if(!full || !initial || !subsequent) ++failures;
+    };
+    auto sample = [&](HWND window, const char* label) {
+        auto pixels=CaptureOwnedWindowOnce(window,report,false);
+        RECT frame=VisibleFrame(window); POINT origin{}; ClientToScreen(window,&origin);
+        UINT dpi=window==host?g.dpi:g.settingsDpi;
+        // Empty title strip: below the resize hit band, clear of title text and
+        // all caption controls in both the compact settings and main window.
+        int x=origin.x-frame.left+MulDiv(160,dpi,96);
+        int y=origin.y-frame.top+MulDiv(14,dpi,96);
+        COLORREF expected=P().windowBackground;
+        bool good=pixels.valid();
+        for(int dy=0;good && dy<5;++dy) for(int dx=0;dx<12;++dx) {
+            if(x+dx<0 || y+dy<0 || x+dx>=pixels.width || y+dy>=pixels.height) {good=false;break;}
+            size_t at=(static_cast<size_t>(y+dy)*pixels.width+x+dx)*4;
+            if(pixels.bgra[at]!=GetBValue(expected) || pixels.bgra[at+1]!=GetGValue(expected) ||
+               pixels.bgra[at+2]!=GetRValue(expected)) {good=false;break;}
+        }
+        // Probe just inside all four edges as well as the title strip. This
+        // catches a classic sizing border even if the title was not repainted.
+        for(POINT p:{POINT{160,2},POINT{2,60},POINT{pixels.width-3,60},POINT{160,pixels.height-3}}) {
+            if(!good || p.x<0 || p.y<0 || p.x>=pixels.width || p.y>=pixels.height) {good=false;break;}
+            size_t at=(static_cast<size_t>(p.y)*pixels.width+p.x)*4;
+            if(pixels.bgra[at]!=GetBValue(expected) || pixels.bgra[at+1]!=GetGValue(expected) ||
+               pixels.bgra[at+2]!=GetRValue(expected)) {good=false;break;}
+        }
+        report << "chrome_immediate " << label << " dark=" << g.darkMode << " match=" << good << '\n';
+        ++samples;
+        if(!good) {
+            ++failures;
+            WritePng(factory,output/(L"chrome-failure-"+std::to_wstring(samples)+L".png"),pixels);
+        }
+    };
+    bool style=(GetWindowLongPtrW(host,GWL_STYLE)&WS_CAPTION)==0 &&
+        (GetWindowLongPtrW(host,GWL_STYLE)&WS_THICKFRAME)!=0;
+    report << "chrome_style caption_absent_resize_present=" << style << '\n';
+    if(!style) ++failures;
+    geometry(host,"main");
+    for(bool dark:{false,true}) {
+        g.darkMode=dark; ApplyDwmFrame(host); SetCaptionSample(0,false);
+        sample(host,"baseline");
+        SetWindowTextW(host,L"WindowCue visual smoke"); sample(host,"set-text");
+        SendMessageW(host,WM_SETICON,ICON_SMALL,reinterpret_cast<LPARAM>(g.appIcon)); sample(host,"set-icon");
+        for(bool active:{false,true}) {
+            SendMessageW(host,WM_NCACTIVATE,active,0); sample(host,active?"activate":"deactivate");
+        }
+        SendMessageW(host,WM_NCPAINT,1,0); sample(host,"nc-paint");
+        SetWindowPos(host,nullptr,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE|SWP_FRAMECHANGED);
+        sample(host,"frame-changed");
+        for(RECT button:{g.minButtonRect,g.maxButtonRect,g.closeButtonRect}) {
+            POINT p{(button.left+button.right)/2,(button.top+button.bottom)/2};ClientToScreen(host,&p);
+            auto hit=SendMessageW(host,WM_NCHITTEST,0,MAKELPARAM(p.x,p.y));
+            SendMessageW(host,WM_NCMOUSEMOVE,hit,MAKELPARAM(p.x,p.y)); sample(host,"nc-hover");
+            SendMessageW(host,WM_NCLBUTTONDOWN,hit,MAKELPARAM(p.x,p.y)); sample(host,"nc-press");
+            // Cancel the press so close/minimize do not hide the test window.
+            ReleaseCapture(); SendMessageW(host,WM_CANCELMODE,0,0); UpdateWindow(host);
+        }
+        SendMessageW(host,WM_NCMOUSELEAVE,0,0); UpdateWindow(host);
+        ShowSettingsWindow(); Pump(60); geometry(g.settingsWindow,"settings");
+        sample(g.settingsWindow,"settings-baseline");
+        SendMessageW(g.settingsWindow,WM_NCACTIVATE,FALSE,0); sample(g.settingsWindow,"settings-deactivate");
+        SendMessageW(g.settingsWindow,WM_NCACTIVATE,TRUE,0); sample(g.settingsWindow,"settings-activate");
+        // Real activation handoff between the owned windows; do not dispatch
+        // queued WM_PAINT before inspecting the resulting composed pixels.
+        for(int cycle=0;cycle<4;++cycle) {
+            SetActiveWindow(host); sample(host,"handoff-main");
+            SetActiveWindow(g.settingsWindow); sample(g.settingsWindow,"handoff-settings");
+        }
+        HideSettingsWindow(); SetActiveWindow(host); UpdateWindow(host);
+        auto clickMaximize = [&]() {
+            RECT r=g.maxButtonRect;POINT p{(r.left+r.right)/2,(r.top+r.bottom)/2};ClientToScreen(host,&p);
+            SendMessageW(host,WM_NCLBUTTONDOWN,HTMAXBUTTON,MAKELPARAM(p.x,p.y));
+            SendMessageW(host,WM_NCLBUTTONUP,HTMAXBUTTON,MAKELPARAM(p.x,p.y));
+            UpdateWindow(host);DwmFlush();
+        };
+        clickMaximize();
+        bool maximized=IsZoomed(host)!=FALSE;
+        geometry(host,"maximized");sample(host,"maximized");
+        clickMaximize();
+        bool restored=!IsZoomed(host);
+        geometry(host,"restored");sample(host,"restored");
+        POINT corner{1,1};ClientToScreen(host,&corner);
+        bool resize=SendMessageW(host,WM_NCHITTEST,0,MAKELPARAM(corner.x,corner.y))==HTTOPLEFT;
+        report << "chrome_behaviors maximized=" << maximized << " restored=" << restored
+               << " resize_hit=" << resize << " system_menu=" << (GetSystemMenu(host,FALSE)!=nullptr) << '\n';
+        if(!maximized || !restored || !resize || !GetSystemMenu(host,FALSE)) ++failures;
+    }
+    report << "chrome_transition_samples=" << samples << " failures=" << failures << '\n';
+    return failures;
+}
 }
 
 int wmain(int argc, wchar_t** argv) {
@@ -216,7 +334,7 @@ int wmain(int argc, wchar_t** argv) {
     const std::filesystem::path output(argv[1]);
     if (!std::filesystem::is_directory(output) || std::filesystem::exists(output / L"caption-report.txt")) return 91;
     std::ofstream report(output / L"caption-report.txt");
-    report << "Actual native UI, production Main.cpp/SVG resources; startup API mocked.\n"
+    report << "Actual native UI, production Main.cpp/Direct2D paths; startup API mocked.\n"
            << "No production entry, user window enumeration, tray registration, settings load or hotkey registration.\n"
            << "Capture source: exact owned-window rectangles only; no full-desktop capture.\n"
            << "96/144/192 DPI are layout simulations, not real mixed-monitor validation.\n";
@@ -245,7 +363,7 @@ int wmain(int argc, wchar_t** argv) {
     // resizingForContent keeps the deliberately empty preview at a fixed height.
     g.resizingForContent = true;
     HWND host = failure ? nullptr : CreateWindowExW(WS_EX_APPWINDOW, kWindowClass, L"WindowCue visual smoke",
-        WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX,
+        kMainWindowStyle,
         left, top, 1080, 310, nullptr, nullptr, g.instance, nullptr);
     if (!host) failure = 95;
     const UINT actualDpi = g.dpi;
@@ -319,7 +437,7 @@ int wmain(int argc, wchar_t** argv) {
                 << RectWidth(compactClient) << 'x' << RectHeight(compactClient)
                 << " status_visible=" << IsWindowVisible(g.startupStatusLabel) << '\n';
             if ((RectWidth(compactClient) > SettingsScale(320) ||
-                 RectHeight(compactClient) > SettingsScale(120) ||
+                 RectHeight(compactClient) > SettingsScale(154) ||
                  IsWindowVisible(g.startupStatusLabel)) && !failure) failure = 100;
             // Show both switch positions without clicking the production
             // control, then the Windows-managed disabled explanation. These
@@ -421,7 +539,45 @@ int wmain(int argc, wchar_t** argv) {
             }
         }
         save(L"caption-states-and-dpi.png", Stack(captionRows));
+        // Exercise the complete scene, including a genuine DWM source and a
+        // bound self-card, without enumerating or interacting with user apps.
+        g.dpi=actualDpi;CreateFonts();g.renderer.Discard();
+        WNDCLASSW fixtureClass{};fixtureClass.hInstance=g.instance;
+        fixtureClass.lpfnWndProc=PreviewFixture;fixtureClass.lpszClassName=L"WindowCue.VisualFixture";
+        RegisterClassW(&fixtureClass);
+        HWND source=CreateWindowExW(WS_EX_TOOLWINDOW,fixtureClass.lpszClassName,L"Native preview fixture",
+            WS_POPUP,monitor.rcWork.left+30,monitor.rcWork.top+600,640,400,nullptr,nullptr,g.instance,nullptr);
+        if(!source && !failure) failure=102;
+        if(source) {
+            ShowWindow(source,SW_SHOWNOACTIVATE);UpdateWindow(source);
+            g.windows.clear();PrependWindowCueItem(g.windows);
+            WindowInfo fixture;fixture.handle=source;fixture.title=L"Live preview";
+            fixture.processPath=L"VectorFixture.exe";g.windows.push_back(std::move(fixture));
+            ActiveBinding binding;binding.target=host;binding.settings.isWindowCue=true;
+            g.bindings.push_back(binding);g.windows[0].bound=true;g.selected=0;g.inputText=L"Alt + P";
+            g.appLargeIcon=static_cast<HICON>(LoadImageW(g.instance,MAKEINTRESOURCEW(IDI_WINDOWCUE),IMAGE_ICON,256,256,0));
+            SetWindowPos(host,HWND_TOPMOST,left,top,Scale(1080),Scale(400),SWP_NOACTIVATE);
+            RegisterThumbnails();Layout();UpdateThumbnails();
+            for(int sample=0;sample<20;++sample) {
+                g.darkMode=(sample%2)!=0;SetCaptionSample(0,false);UpdateThumbnails();Pump(50);DwmFlush();
+                auto pixels=CaptureOwnedWindow(host,report);
+                if(sample<2) save(g.darkMode?L"dark-fixture.png":L"light-fixture.png",pixels);
+                RECT frame=VisibleFrame(host);POINT origin{};ClientToScreen(host,&origin);
+                RECT preview=g.windows[1].appliedThumbnailRect;
+                int x=origin.x-frame.left+(preview.left+preview.right)/2;
+                int y=origin.y-frame.top+(preview.top+preview.bottom)/2;
+                bool valid=pixels.valid() && x>=0 && y>=0 && x<pixels.width && y<pixels.height;
+                if(valid) {
+                    size_t at=(static_cast<size_t>(y)*pixels.width+x)*4;
+                    valid=pixels.bgra[at]==204 && pixels.bgra[at+1]==151 && pixels.bgra[at+2]==37;
+                }
+                report << "vector_preview_theme_sample=" << sample << " pixel_match=" << valid << '\n';
+                if(!valid && !failure) failure=103;
+            }
+            g.renderer.ForgetImages();ReleaseWindows(g.windows);g.bindings.clear();DestroyWindow(source);
+        }
         report << "mock_startup_changes=" << visualStartupChanges << " (expected zero)\n";
+        if(CheckChromeTransitions(host,factory.Get(),output,report) && !failure) failure=104;
         if (visualStartupChanges != 0 && !failure) failure = 99;
         ExitApplication();
         Pump(20);

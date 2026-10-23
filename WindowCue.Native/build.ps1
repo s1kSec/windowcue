@@ -1,4 +1,4 @@
-param([switch]$BuildRegressionTests)
+﻿param([switch]$BuildRegressionTests)
 
 $ErrorActionPreference = 'Stop'
 
@@ -8,8 +8,7 @@ $outputRoot = Join-Path $projectRoot 'dist\WindowCue.Native'
 $objectRoot = Join-Path $nativeRoot 'artifacts\obj'
 $sourceFiles = @(
     (Join-Path $nativeRoot 'src\Main.cpp'),
-    (Join-Path $nativeRoot 'src\Platform.cpp'),
-    (Join-Path $nativeRoot 'src\SvgIconRenderer.cpp')
+    (Join-Path $nativeRoot 'src\Platform.cpp')
 )
 
 function Find-VisualStudio {
@@ -92,7 +91,7 @@ function Build-NativeVariant {
         $resource, "/Fe:$executable", '/link', '/INCREMENTAL:NO', '/SUBSYSTEM:WINDOWS,6.02',
         "/LIBPATH:$msvcLib", "/LIBPATH:$sdkUcrtLib", "/LIBPATH:$sdkUmLib",
         'user32.lib', 'gdi32.lib', 'shell32.lib', 'shlwapi.lib', 'ole32.lib', 'dwmapi.lib',
-        'd2d1.lib', 'd3d11.lib', 'dxgi.lib', 'msimg32.lib', 'uxtheme.lib',
+        'd2d1.lib', 'dwrite.lib', 'windowscodecs.lib', 'uiautomationcore.lib', 'oleaut32.lib',
         'advapi32.lib', 'runtimeobject.lib', 'windowsapp.lib', 'comctl32.lib'
     )
     & $cl @compileArgs
@@ -108,9 +107,8 @@ Build-NativeVariant -Suffix 'EN' -LanguageDefine '/DLANG_EN'
 if ($BuildRegressionTests) {
     $testSources = @(
         (Join-Path $nativeRoot 'tests\UiRegression.cpp'),
-        (Join-Path $nativeRoot 'src\Platform.cpp'),
-        (Join-Path $nativeRoot 'src\SvgIconRenderer.cpp')
-    )
+        (Join-Path $nativeRoot 'src\Platform.cpp')
+        )
     $testOutput = Join-Path $nativeRoot 'artifacts\tests'
     Build-NativeVariant -Suffix 'Regression_CN' -LanguageDefine '/DLANG_CN' `
         -VariantSources $testSources -Destination $testOutput
