@@ -4,7 +4,7 @@
 
 ## 目标
 
-- C++17 + Win32 + GDI + DWM Thumbnail API；
+- C++17 + Win32 + Direct2D + DirectWrite + DWM Thumbnail API；
 - 最低支持 Windows 10 1809（17763）x64；
 - 不使用 Qt、MFC、.NET、WebView 或任何第三方运行库；
 - 使用 `/MT` 静态链接 Microsoft C/C++ 运行时，发布结果为独立 EXE；
@@ -12,6 +12,16 @@
 - 与现有版本共用 `%LocalAppData%\WindowCue\bindings.json`。
 
 测试可通过进程环境变量 `WINDOWCUE_SETTINGS_DIR` 覆盖配置目录；设置该变量时，自启动后端同时改用 `HKCU\Software\WindowCue\StartupTests\<目录哈希>` 的隔离注册表子树，绝不写入真实登录启动项，因此不应将该测试变量当作生产自启动的自定义配置方案。
+
+## 2026-10-23：1.1.1.0 窗口边框修复候选
+
+移除 `WS_CAPTION`，启用 DWM 合成并保持完整客户区，修复激活/点击时系统经典外框覆盖应用标题栏的问题。`Build-CaptionVisual.ps1` 新增消息返回后、下一次 `WM_PAINT` 前的标题栏及四边像素检查，同时检查最大化、还原和缩放命中。细节及验证边界见 [修复记录](../docs/ChromeFix-1.1.1.0.md)。
+
+## 2026-10-23：1.1.0.0 矢量渲染候选（已替代）
+
+主界面及设置直接使用矢量形状与文字，不再使用 UI 图标 HBITMAP、GDI 圆角和玻璃标题栏叠加。`RenderContext.h`、`Theme.h`、`WindowChrome.h`、`Automation.h` 分别负责渲染、语义主题、窗口边界和无障碍；DWM 预览保留原生关系，复杂脏区显式传入 D2D。
+
+完整实现、测试及未完成的跨系统验收见 [改造记录](../docs/RenderingImplementation-1.1.0.0.md)。`--render-self-test` 验证当前矢量路径及主题对比度；旧 `--svg-self-test` 为兼容别名。历史 `Build-IconVisual.ps1` 检查旧位图诊断实现，不能代表当前产品渲染验收；使用新的 `Build-VectorPreview.ps1` 和更新后的 `Build-CaptionVisual.ps1` 检查当前实现。
 
 ## 2026-10-13：1.0.4.0 紧凑设置
 
@@ -102,20 +112,10 @@
 - 录入快捷键时不显示等待提示，并暂时注销已有快捷键以避免误触发；
 - 目标在前台时快捷键将其最小化，否则恢复、置顶并获取焦点；
 - 目标 HWND 消失后自动注销并删除对应绑定；
-- 自绘同色标题栏、内容驱动高度、最小预览区、固定底部绑定栏和内部滚动；
-- 标题栏太阳/月亮按钮可切换暗色与亮色主题，选择保存在
-  `%LocalAppData%\WindowCue\appearance.txt`；
-- 主题图标作为 SVG 资源嵌入 EXE，并由 Windows Direct2D 原生渲染；
-- 透明自绘标题使用 `DrawThemeTextEx` 的合成文本路径；最小化、最大化和关闭
-  在亮暗主题下均仅由 DWM 绘制并负责命中、悬停和命令行为；
-- 主题按钮依据 DWM 返回的真实标题按钮边界定位，在不同 DPI 下保持正确间距；
-- 两套主题分别定义背景、卡片、边框、主次文字、输入框和按钮颜色，
-  普通文字对比度不低于 4.5:1；
-- 视觉层级采用 Codex/WorkBuddy 风格的中性灰、柔和灰白表面、黑白主按钮、
-  细焦点边框和 8px 控件圆角；
-- 中文界面使用 `Microsoft YaHei UI`、Natural ClearType 与较轻字重；
-- DWM 统一提供整条标题栏的最终底色，客户区不再与其二次混色，并保留真实
-  系统边框颜色，避免暗色标题栏分块和亮色顶部锯齿；
+- 自绘标题栏、内容驱动高度、最小预览区、固定底部绑定栏与细胶囊滚动条；
+- 标题栏太阳/月亮按钮可切换暗夜与低眩光亮色主题（亮色底色 `#E0E5EC`），选择保存在 `%LocalAppData%\WindowCue\appearance.txt`；
+- 全部 UI 图标、卡片徽章、快捷键键帽、开关及窗口控制按钮均由 Direct2D 矢量路径与 DirectWrite 排版直接绘制，不依赖 UI 位图贴图，并通过 `WM_PRINTCLIENT` 兼容窗口捕获；
+- 主窗口与单 HWND 浮动设置弹层在 Windows 11 启用硬件 `DWMWCP_ROUND` 圆角与主题同步 `DWMWA_BORDER_COLOR`，并在首次显示前经 `DWMWA_CLOAK` 预渲染消除黑屏闪现；点击主业务区或失焦自动收起设置弹层；
 - 启动后静默进入系统托盘，关闭及最小化也进入托盘，双击托盘恢复，托盘菜单可退出；
 - 中文、英文两个构建版本。
 
@@ -136,8 +136,6 @@
 
 ## Window chrome
 
-- The normal window width is fixed at 1080 logical pixels (DPI-aware); edge resizing is disabled.
-- Maximize and restore remain available from the custom caption.
-- A subtle client-side frame remains visible without enabling the system resize border.
-- Minimize, maximize/restore, and close are rendered by DWM itself. The custom frame
-  delegates caption-button hit testing to `DwmDefWindowProc` and follows the selected theme.
+- The main window removes `WS_CAPTION` while keeping `WS_THICKFRAME`, minimize/maximize, system menu, and Windows 11 Snap Layout hit testing (`HTMAXBUTTON`).
+- On Windows 11+, both the main window and the floating single-HWND settings popover apply `DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_ROUND` and theme-matched `DWMWA_BORDER_COLOR`, falling back cleanly to client-drawn framing on Windows 10.
+- All title bar controls, utility buttons, cards, hotkey badges, keycaps, and settings controls are drawn directly with Direct2D vector geometry and DirectWrite typography.

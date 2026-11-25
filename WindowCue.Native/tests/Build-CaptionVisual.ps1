@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$OutputDirectory,
     [ValidateSet('CN','EN')][string]$Language = 'CN',
     [switch]$BuildOnly
@@ -40,13 +40,12 @@ $compileArguments += $toolchain.IncludePaths | ForEach-Object { "/I$_" }
 $compileArguments += @(
     (Join-Path $PSScriptRoot 'CaptionVisual.cpp'),
     (Join-Path $nativeRoot 'src\Platform.cpp'),
-    (Join-Path $nativeRoot 'src\SvgIconRenderer.cpp'),
     $resource, "/Fe:$executable", '/link', '/INCREMENTAL:NO', '/SUBSYSTEM:CONSOLE,6.02'
 )
 $compileArguments += $toolchain.LibraryPaths | ForEach-Object { "/LIBPATH:$_" }
 $compileArguments += @(
     'user32.lib', 'gdi32.lib', 'shell32.lib', 'shlwapi.lib', 'ole32.lib', 'dwmapi.lib',
-    'd2d1.lib', 'd3d11.lib', 'dxgi.lib', 'msimg32.lib', 'uxtheme.lib',
+    'd2d1.lib', 'dwrite.lib', 'windowscodecs.lib', 'uiautomationcore.lib', 'oleaut32.lib',
     'advapi32.lib', 'runtimeobject.lib', 'windowsapp.lib', 'comctl32.lib', 'windowscodecs.lib'
 )
 Push-Location $buildDirectory

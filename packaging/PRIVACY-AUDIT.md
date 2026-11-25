@@ -1,5 +1,7 @@
 # WindowCue 用户数据处理专项审计
 
+> 2026-10-23 渲染改造说明：产品绘制入口已迁移到 `WindowCue.Native/src/RenderContext.h`，工具图标使用直接矢量路径，`SvgIconRenderer.cpp` 不再编入产品。新增 DirectWrite、WIC 和 UI Automation 用于本地文字、应用图标与无障碍。以下代码行号和哈希保留原审计时的历史快照；此说明不代表重新完成全部安全审计。实现及验证边界见 `docs/RenderingImplementation-1.1.0.0.md`。
+
 ## 2026-10-13：1.0.2.0 功能变更补充
 
 以下历史审计记录基于 2026-10-11 的源码快照。本次新增自启动后，其“无直接注册表写入”和“StartupTask 默认禁用”的结论不再描述当前版本。

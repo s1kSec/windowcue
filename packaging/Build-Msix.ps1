@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [ValidateSet('CN', 'EN')][string]$Language = 'CN',
     [ValidateSet('Store', 'LocalTest')][string]$Mode = 'Store',
@@ -118,11 +118,11 @@ try {
         '/DUNICODE', '/D_UNICODE', '/DWIN32_LEAN_AND_MEAN', '/DNOMINMAX', '/D_WIN32_WINNT=0x0A00', "/DLANG_$Language")
     $compileArgs += @($tools.IncludePaths | ForEach-Object { "/I$_" })
     $compileArgs += @("/I$(Join-Path $nativeRoot 'src')", "/Fo$($objRoot)\", "/Fe:$exe")
-    $compileArgs += @('src\Main.cpp', 'src\Platform.cpp', 'src\SvgIconRenderer.cpp', $nativeResource, $versionResource)
+    $compileArgs += @('src\Main.cpp', 'src\Platform.cpp', $nativeResource, $versionResource)
     $compileArgs += @('/link', '/MACHINE:X64', '/INCREMENTAL:NO', '/SUBSYSTEM:WINDOWS,6.02', '/DYNAMICBASE', '/NXCOMPAT')
     $compileArgs += @($tools.LibraryPaths | ForEach-Object { "/LIBPATH:$_" })
     $compileArgs += @('user32.lib', 'gdi32.lib', 'shell32.lib', 'shlwapi.lib', 'ole32.lib', 'dwmapi.lib',
-        'd2d1.lib', 'd3d11.lib', 'dxgi.lib', 'msimg32.lib', 'uxtheme.lib',
+        'd2d1.lib', 'dwrite.lib', 'windowscodecs.lib', 'uiautomationcore.lib', 'oleaut32.lib',
         'advapi32.lib', 'runtimeobject.lib', 'windowsapp.lib', 'comctl32.lib')
     # cl invokes link; supply only its tool directory temporarily and restore PATH.
     $previousPath = $env:PATH
@@ -140,13 +140,15 @@ $imports = @($dumpOutput | ForEach-Object {
     if ($_ -match '^\s+([A-Za-z0-9_.-]+\.dll)\s*$') { $Matches[1] }
 } | Sort-Object -Unique)
 $allowedSystemDlls = @('KERNEL32.dll', 'USER32.dll', 'GDI32.dll', 'SHELL32.dll', 'SHLWAPI.dll', 'ole32.dll',
-    'DWMAPI.dll', 'd2d1.dll', 'd3d11.dll', 'dxgi.dll', 'MSIMG32.dll', 'UxTheme.dll', 'ADVAPI32.dll',
+    'DWMAPI.dll', 'DWrite.dll', 'WindowsCodecs.dll', 'UIAutomationCore.dll', 'd2d1.dll', 'd3d11.dll', 'dxgi.dll', 'MSIMG32.dll', 'UxTheme.dll', 'ADVAPI32.dll',
     'OLEAUT32.dll', 'COMDLG32.dll', 'COMCTL32.dll', 'COMBASE.dll',
     'api-ms-win-core-winrt-l1-1-0.dll', 'api-ms-win-core-winrt-error-l1-1-0.dll',
     'api-ms-win-core-winrt-string-l1-1-0.dll',
     # windowsapp.lib imports Windows API-set contracts supplied by the OS.
     # Keep the observed contract names explicit; never permit arbitrary DLLs.
     'api-ms-win-core-processenvironment-l1-1-0.dll', 'api-ms-win-core-file-l1-1-0.dll',
+    # OutputDebugStringW: optional compositor diagnostics, Windows API-set only.
+    'api-ms-win-core-debug-l1-1-0.dll',
     'api-ms-win-core-handle-l1-1-0.dll', 'api-ms-win-core-errorhandling-l1-1-0.dll',
     'api-ms-win-core-synch-l1-1-0.dll', 'api-ms-win-core-processthreads-l1-1-0.dll',
     'api-ms-win-core-libraryloader-l1-2-0.dll', 'api-ms-win-core-heap-l2-1-0.dll',

@@ -53,7 +53,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     wc.lpszClassName = kWindowClass;
     if (!RegisterClassW(&wc)) return 91;
     HWND host = CreateWindowExW(WS_EX_TOOLWINDOW, kWindowClass, L"WindowCue regression",
-        WS_POPUP | WS_CAPTION, -32000, -32000, 1080, 610,
+        kMainWindowStyle, -32000, -32000, 1080, 610,
         nullptr, nullptr, instance, nullptr);
     HWND source = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"Preview source",
         WS_POPUP, -32000, -32000, 640, 480,
@@ -64,9 +64,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     int failure = 0;
     auto check = [&](bool ok, int code) { if (!ok && !failure) failure = code; };
     check(!IsWindowVisible(host), 58);
+
+    // Light mode must be comfortably toned down (matte low-glare) and pass WCAG AA.
     g.darkMode = false;
-    check(P().windowBackground == RGB(245, 248, 252), 59);
+    check(RelativeLuminance(P().windowBackground) <= 0.84 &&
+          RelativeLuminance(P().cardBackground) <= 0.88 &&
+          ValidateThemePalettes(), 59);
     g.darkMode = true;
+
     // A fresh configuration creates Alt+P and persists the semantic self target.
     LoadBindings();
     int selfIndex = BindingIndexForWindow(host);
@@ -100,6 +105,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
           BindingIndexForWindow(host) < 0, 18);
     g.bindings.clear();
     SetEnvironmentVariableW(L"WINDOWCUE_SETTINGS_DIR", isolatedDirectory);
+
     // A changed HWND must not make the saved WindowCue hotkey stale.
     if (!saved.empty()) {
         ActiveBinding stale;
@@ -122,8 +128,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     g.bindings.clear();
 
     // Exercise the actual client layout at common DPI scales, including the
-    // exact width at which another column fits. A scroll bar is allowed only
-    // when the normal window has reached the monitor's work-area height.
+    // exact width at which another column fits.
     UINT actualDpi = g.dpi;
     for (UINT dpi : {96u, 120u, 144u, 192u}) {
         g.dpi = dpi;
@@ -138,12 +143,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
                 g.windows.clear();
                 g.windows.resize(count);
                 g.scrollOffset = 100000;
-                SetWindowPos(host, nullptr, -32000, -32000, width, Scale(310),
+                SetWindowPos(host, nullptr, -32000, -32000, width, Scale(320),
                              SWP_NOZORDER | SWP_NOACTIVATE);
                 ResizeForContent();
                 Layout();
                 check(g.settingsButtonRect.right == g.themeButtonRect.left &&
-                      RectWidth(g.settingsButtonRect) == Scale(38), 60);
+                      RectWidth(g.settingsButtonRect) == Scale(34), 60);
                 POINT settingsPoint{g.settingsButtonRect.left + Scale(10),
                                      g.settingsButtonRect.top + Scale(10)};
                 ClientToScreen(host, &settingsPoint);
@@ -174,9 +179,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     }
     g.dpi = actualDpi;
     g.windows.resize(11);
-    // Restore must repair a short viewport even if the window list is unchanged.
     g.resizingForContent = true;
-    SetWindowPos(host, nullptr, -32000, -32000, Scale(1080), Scale(310),
+    SetWindowPos(host, nullptr, -32000, -32000, Scale(1080), Scale(320),
                  SWP_NOZORDER | SWP_NOACTIVATE);
     g.resizingForContent = false;
     SendMessageW(host, WM_SIZE, SIZE_RESTORED, 0);
@@ -203,6 +207,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     UpdateWindow(host);
     UpdateThumbnails();
     check(g.windows[1].thumbnailVisible, 29);
+
     // Tooltips remain native, localized, and aligned with the hit regions.
     check(g.captionTooltips && SendMessageW(g.captionTooltips, TTM_GETTOOLCOUNT, 0, 0) == 2, 80);
     if (g.captionTooltips) {
@@ -216,8 +221,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
               SameRect(tip.rect, g.settingsButtonRect) &&
               std::wstring(tipText) == T().settingsTooltip, 81);
     }
-    // The hover path must invalidate only caption controls, and reduced motion
-    // must settle immediately without a running frame timer.
+
+    // Hover path invalidates only caption controls; reduced motion settles immediately.
     bool animationPolicy = g.captionAnimationsAllowed;
     ResetCaptionInteraction();
     ValidateRect(host, nullptr);
@@ -236,92 +241,79 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     check(g.settingsHoverAnimation.value == 0.0 && !g.captionAnimationRunning, 85);
     ResetCaptionInteraction();
     g.captionAnimationsAllowed = animationPolicy;
-    UINT captionDpi = g.dpi;
-    for (UINT dpi : {96u, 120u, 144u, 192u}) {
-        g.dpi = dpi;
-        CreateFonts();
-        LOGFONTW titleFont{};
-        check(GetObjectW(g.titleFont, sizeof(titleFont), &titleFont) &&
-              titleFont.lfHeight == -MulDiv(9, static_cast<int>(dpi), 72), 86);
-    }
-    g.dpi = captionDpi;
-    CreateFonts();
-    // The gear opens an owned settings window. Native controls provide real
-    // focus traversal; the rendered switch reflects effective Windows state.
-    POINT gearPoint{g.settingsButtonRect.left + Scale(10), Scale(10)};
+
+    // Exercise the single-HWND floating Settings popover: zero child swap-chains,
+    // keyboard navigation, state expansion, UIA, and automatic light-dismiss.
+    POINT gearPoint{g.settingsButtonRect.left + Scale(10), Scale(16)};
     SendMessageW(host, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(gearPoint.x, gearPoint.y));
     SendMessageW(host, WM_LBUTTONUP, 0, MAKELPARAM(gearPoint.x, gearPoint.y));
     check(g.settingsWindow && IsWindowVisible(g.settingsWindow) &&
           GetWindow(g.settingsWindow, GW_OWNER) == host, 62);
-    check(g.settingsDarkIcon && g.settingsLightIcon && g.githubDarkIcon && g.githubLightIcon, 63);
+    check(g.renderer.ValidateGeometry() && !g.renderingFailed, 63);
+
     if (g.settingsWindow) {
-        RECT compactClient{}, switchBounds{}, githubBounds{};
+        RECT compactClient{};
         GetClientRect(g.settingsWindow, &compactClient);
-        GetWindowRect(g.startupButton, &switchBounds);
-        GetWindowRect(g.githubButton, &githubBounds);
-        check(RectWidth(compactClient) <= SettingsScale(320) &&
-              RectHeight(compactClient) <= SettingsScale(120), 100);
-        check(RectWidth(switchBounds) == SettingsScale(36) &&
-              RectHeight(switchBounds) == SettingsScale(20), 101);
-        check(RectWidth(githubBounds) == SettingsScale(32) &&
-              RectHeight(githubBounds) == SettingsScale(32), 102);
-        check(!IsWindowVisible(g.startupStatusLabel), 103);
-        // The explanatory tray hint was removed. Only the title, optional
-        // Windows status, startup switch and GitHub icon remain as controls.
-        int childCount = 0;
-        for (HWND child = GetWindow(g.settingsWindow, GW_CHILD); child;
-             child = GetWindow(child, GW_HWNDNEXT)) ++childCount;
-        check(childCount == 4, 104);
-        wchar_t buttonText[256]{};
-        GetWindowTextW(g.startupButton, buttonText, static_cast<int>(std::size(buttonText)));
-        check(std::wstring(buttonText) == T().startupEnable && IsWindowEnabled(g.startupButton), 64);
-        SendMessageW(g.startupButton, BM_CLICK, 0, 0);
+        check(RectWidth(compactClient) == SettingsScale(kSettingsWidth) &&
+              RectHeight(compactClient) <= SettingsScale(130), 100);
+        check(RectWidth(g.settingsSwitchRect) == SettingsScale(38) &&
+              RectHeight(g.settingsSwitchRect) == SettingsScale(20), 101);
+        check(RectWidth(g.settingsGitHubRect) == SettingsScale(30) &&
+              RectHeight(g.settingsGitHubRect) == SettingsScale(30), 102);
+        check(g.settingsMessage.empty(), 103);
+        // Single-HWND popover: zero child HWNDs means zero extra D2D swap-chains.
+        check(GetWindow(g.settingsWindow, GW_CHILD) == nullptr, 104);
+
+        // Clicking startup switch toggles startup cleanly.
+        POINT switchCenter{(g.settingsSwitchRect.left + g.settingsSwitchRect.right) / 2,
+                           (g.settingsSwitchRect.top + g.settingsSwitchRect.bottom) / 2};
+        SendMessageW(g.settingsWindow, WM_LBUTTONDOWN, MK_LBUTTON,
+                     MAKELPARAM(switchCenter.x, switchCenter.y));
+        SendMessageW(g.settingsWindow, WM_LBUTTONUP, 0,
+                     MAKELPARAM(switchCenter.x, switchCenter.y));
         check(regressionStartupChanges == 1 && g.startupStatus.state == StartupState::Enabled &&
-              !IsWindowVisible(g.startupStatusLabel), 65);
-        GetWindowTextW(g.startupButton, buttonText, static_cast<int>(std::size(buttonText)));
-        check(std::wstring(buttonText) == T().startupDisable, 66);
+              g.settingsMessage.empty(), 65);
+
+        // Enter key toggles the focused switch back to disabled.
+        g.settingsFocusIndex = 0;
         MSG enter{};
-        enter.hwnd = g.startupButton;
+        enter.hwnd = g.settingsWindow;
         enter.message = WM_KEYDOWN;
         enter.wParam = VK_RETURN;
-        SetFocus(g.startupButton);
         check(HandleSettingsMessage(enter) && regressionStartupChanges == 2 &&
               g.startupStatus.state == StartupState::Disabled &&
-              !IsWindowVisible(g.startupStatusLabel), 67);
+              g.settingsMessage.empty(), 67);
+
+        // Windows-managed / policy / unavailable states expand banner & restore cleanly.
         for (StartupState state : {StartupState::DisabledByUser, StartupState::DisabledByPolicy,
-                                    StartupState::Unavailable}) {
+                                   StartupState::Unavailable}) {
             regressionStartupStatus.state = state;
             RefreshStartupControls();
-            GetWindowTextW(g.startupButton, buttonText, static_cast<int>(std::size(buttonText)));
-            check(IsWindowEnabled(g.startupButton) == (state == StartupState::DisabledByUser), 68);
-            if (state == StartupState::DisabledByUser) {
-                check(std::wstring(buttonText) == T().startupWindowsSettings, 69);
-            }
-            wchar_t statusText[512]{};
-            GetWindowTextW(g.startupStatusLabel, statusText, static_cast<int>(std::size(statusText)));
-            check(std::wstring(statusText).find(StartupStateText(state)) == 0, 70);
+            check(CanInteractWithStartup() == (state == StartupState::DisabledByUser), 68);
+            check(g.settingsMessage.find(StartupStateText(state)) == 0, 70);
             RECT warningClient{};
             GetClientRect(g.settingsWindow, &warningClient);
-            check(IsWindowVisible(g.startupStatusLabel) &&
-                  RectHeight(warningClient) > RectHeight(compactClient) &&
+            check(RectHeight(warningClient) > RectHeight(compactClient) &&
                   RectWidth(warningClient) == RectWidth(compactClient), 105);
         }
         regressionStartupStatus.state = StartupState::Disabled;
         RefreshStartupControls();
         RECT restoredClient{};
         GetClientRect(g.settingsWindow, &restoredClient);
-        check(!IsWindowVisible(g.startupStatusLabel) &&
-              SameRect(restoredClient, compactClient), 106);
+        check(g.settingsMessage.empty() && SameRect(restoredClient, compactClient), 106);
+
+        // Tab cycles focus to GitHub; Escape closes Settings.
+        g.settingsFocusIndex = 0;
         MSG tab{};
-        tab.hwnd = g.startupButton;
+        tab.hwnd = g.settingsWindow;
         tab.message = WM_KEYDOWN;
         tab.wParam = VK_TAB;
-        SetFocus(g.startupButton);
-        check(HandleSettingsMessage(tab) && GetFocus() == g.githubButton, 71);
+        check(HandleSettingsMessage(tab) && g.settingsFocusIndex == 1, 71);
         MSG escape = tab;
-        escape.hwnd = g.githubButton;
         escape.wParam = VK_ESCAPE;
         check(HandleSettingsMessage(escape) && !IsWindowVisible(g.settingsWindow), 72);
+
+        // Reopen via Ctrl+, (must NOT trigger while capturing a hotkey).
         BYTE originalKeys[256]{};
         BYTE controlKeys[256]{};
         GetKeyboardState(originalKeys);
@@ -336,56 +328,81 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         SendMessageW(host, WM_KEYDOWN, VK_OEM_COMMA, 0);
         SetKeyboardState(originalKeys);
         check(IsWindowVisible(g.settingsWindow), 73);
-        // Owner-drawn accessibility labels must not turn into a visible GitHub
-        // text tile. Inspect the real drawing path in both themes, including
-        // the pressed state: its entire outer band stays the parent color.
-        auto iconOnlyGitHub = [&](bool pressed) {
-            const int size = SettingsScale(32);
-            HDC windowDc = GetDC(g.settingsWindow);
-            HDC dc = CreateCompatibleDC(nullptr);
-            HBITMAP bitmap = windowDc ? CreateCompatibleBitmap(windowDc, size, size) : nullptr;
-            if (windowDc) ReleaseDC(g.settingsWindow, windowDc);
-            if (!dc || !bitmap) {
-                if (bitmap) DeleteObject(bitmap);
-                if (dc) DeleteDC(dc);
-                return false;
-            }
-            HGDIOBJ previous = SelectObject(dc, bitmap);
-            DRAWITEMSTRUCT item{};
-            item.CtlID = kGitHubButtonId;
-            item.hDC = dc;
-            item.rcItem = MakeRect(0, 0, size, size);
-            item.itemState = pressed ? ODS_SELECTED : 0;
-            DrawSettingsButton(item);
-            bool cleanBand = true, hasIcon = false;
-            const int inset = SettingsScale(4);
-            for (int y = 0; y < size; ++y) {
-                for (int x = 0; x < size; ++x) {
-                    COLORREF pixel = GetPixel(dc, x, y);
-                    bool outside = x < inset || y < inset ||
-                                   x >= size - inset || y >= size - inset;
-                    if (outside && pixel != P().windowBackground) cleanBand = false;
-                    if (!outside && pixel != P().windowBackground) hasIcon = true;
-                }
-            }
-            SelectObject(dc, previous);
-            DeleteObject(bitmap);
-            DeleteDC(dc);
-            return cleanBand && hasIcon;
-        };
+
+        // Auto-close #1: clicking the main window's business area hides Settings.
+        POINT businessPoint{g.previewInner.left + Scale(20), g.previewInner.top + Scale(20)};
+        SendMessageW(host, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(businessPoint.x, businessPoint.y));
+        SendMessageW(host, WM_LBUTTONUP, 0, MAKELPARAM(businessPoint.x, businessPoint.y));
+        check(!IsWindowVisible(g.settingsWindow), 114);
+
+        // Auto-close #2: losing activation (WA_INACTIVE) hides Settings.
+        ShowSettingsWindow();
+        check(IsWindowVisible(g.settingsWindow), 115);
+        SendMessageW(g.settingsWindow, WM_ACTIVATE, WA_INACTIVE, reinterpret_cast<LPARAM>(host));
+        check(!IsWindowVisible(g.settingsWindow), 116);
+
+        // Gear button toggle: clicking gear while Settings is open closes cleanly.
+        ShowSettingsWindow();
+        check(IsWindowVisible(g.settingsWindow), 117);
+        SendMessageW(host, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(gearPoint.x, gearPoint.y));
+        SendMessageW(host, WM_LBUTTONUP, 0, MAKELPARAM(gearPoint.x, gearPoint.y));
+        check(!IsWindowVisible(g.settingsWindow), 118);
+
+        // Verify UI Automation fragment root + StartupSwitch ToggleState.
+        ShowSettingsWindow();
         for (bool dark : {false, true}) {
             g.darkMode = dark;
             ApplySettingsTheme();
-            LOGBRUSH brush{};
-            check(GetObjectW(g.settingsBackgroundBrush, sizeof(brush), &brush) != 0 &&
-                  brush.lbColor == P().windowBackground, 74);
-            check(iconOnlyGitHub(false) && iconOnlyGitHub(true), 107);
             UpdateWindow(g.settingsWindow);
+            check(ValidateThemePalettes(), 74);
+            check(g.settingsRenderer.ValidateGeometry() && !g.renderingFailed, 107);
         }
+        auto* rootAuto = new SettingsPopoverAutomation(&gSettingsAccessibility);
+        IRawElementProviderFragment* firstChild = nullptr;
+        check(SUCCEEDED(rootAuto->Navigate(NavigateDirection_FirstChild, &firstChild)) &&
+              firstChild != nullptr, 108);
+        if (firstChild) {
+            IToggleProvider* toggleProvider = nullptr;
+            check(SUCCEEDED(firstChild->QueryInterface(__uuidof(IToggleProvider),
+                                                       reinterpret_cast<void**>(&toggleProvider))) &&
+                  toggleProvider != nullptr, 109);
+            if (toggleProvider) {
+                ToggleState state{};
+                check(SUCCEEDED(toggleProvider->get_ToggleState(&state)) &&
+                      state == ToggleState_Off, 119);
+                regressionStartupStatus.state = StartupState::Enabled;
+                RefreshStartupControls();
+                check(SUCCEEDED(toggleProvider->get_ToggleState(&state)) &&
+                      state == ToggleState_On, 120);
+                toggleProvider->Release();
+            }
+            firstChild->Release();
+        }
+        rootAuto->Release();
+        regressionStartupStatus.state = StartupState::Disabled;
+        RefreshStartupControls();
+
+        POINT maxPoint{(g.maxButtonRect.left + g.maxButtonRect.right) / 2, Scale(16)};
+        ClientToScreen(host, &maxPoint);
+        check(HitTest(maxPoint) == HTMAXBUTTON, 110);
+        POINT closePoint{(g.closeButtonRect.left + g.closeButtonRect.right) / 2, Scale(16)};
+        ClientToScreen(host, &closePoint);
+        check(HitTest(closePoint) == HTCLOSE, 111);
+        TITLEBARINFOEX titleInfo{};
+        titleInfo.cbSize = sizeof(titleInfo);
+        SendMessageW(host, WM_GETTITLEBARINFOEX, 0, reinterpret_cast<LPARAM>(&titleInfo));
+        check(titleInfo.rgrect[3].right > titleInfo.rgrect[3].left &&
+              !(titleInfo.rgstate[3] & STATE_SYSTEM_INVISIBLE), 112);
+        unsigned generation = g.renderer.Generation();
+        g.renderer.Discard();
+        InvalidateRect(host, nullptr, FALSE);
+        UpdateWindow(host);
+        check(!g.renderingFailed && g.renderer.Generation() > generation, 113);
         HideSettingsWindow();
         check(std::wstring(kGitHubUrl) == L"https://github.com/s1kSec/windowcue", 75);
         ActivateWindow(host);
     }
+
     auto submittedTransform = [&]() -> const DWM_THUMBNAIL_PROPERTIES* {
         for (auto entry = submissions.rbegin(); entry != submissions.rend(); ++entry) {
             if (entry->thumbnail == thumbnail &&
@@ -413,12 +430,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     UpdateThumbnails(true);
     check(submissions.size() > unchangedCount && boundedTransform(), 38);
 
-    // Equal-aspect source resizes leave the fitted target unchanged. They must
-    // still submit a new source rectangle instead of reusing a stale transform.
     RECT initialDestination = g.windows[1].appliedThumbnailRect;
     size_t beforeResize = submissions.size();
-    SetWindowPos(source, nullptr, 0, 0, 1280, 960,
-                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    SetWindowPos(source, nullptr, 0, 0, 1280, 960, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     DwmFlush();
     UpdateThumbnails();
     check(submissions.size() > beforeResize && boundedTransform() &&
@@ -430,12 +444,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         UpdateThumbnails();
         check(boundedTransform() && g.windows[1].thumbnail == thumbnail, 40);
     }
+
     HRGN update = CreateRectRgn(0, 0, 0, 0);
     auto previewsUntouched = [&]() {
         GetUpdateRgn(host, update, FALSE);
         return !RectInRegion(update, &g.windows[1].previewRect);
     };
-    // These are the production paths that previously repainted every preview.
     for (bool dark : {true, false}) {
         g.darkMode = dark;
         ValidateRect(host, nullptr);
@@ -456,8 +470,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
                          g.windows[1].cardRect.top + 10), 31);
         ValidateRect(host, nullptr);
         RECT card = g.windows[1].cardRect;
-        SendMessageW(host, WM_MOUSEMOVE, 0,
-                     MAKELPARAM(card.left + 10, card.top + 10));
+        SendMessageW(host, WM_MOUSEMOVE, 0, MAKELPARAM(card.left + 10, card.top + 10));
         check(g.hovered == 1 && previewsUntouched(), 25);
         ValidateRect(host, nullptr);
         SelectWindowCard(1);
@@ -469,8 +482,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
               size.cx > 0 && size.cy > 0, 28);
     }
 
-    // Exercise the real hotkey dispatch and Win32 focus handoff with live DWM
-    // surfaces. Only the two off-screen test windows are used as targets.
     ActiveBinding targetBinding;
     targetBinding.hotkeyId = kFirstHotkeyId + 100;
     targetBinding.target = source;
@@ -488,8 +499,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     UpdateThumbnails();
     check(g.windows[1].thumbnailSourceIconic && boundedTransform(), 43);
     ActivateWindow(source);
-    // ActivateWindow uses ShowWindowAsync; the normal application message loop
-    // dispatches the restore before its next thumbnail timer tick.
     MSG pending{};
     while (PeekMessageW(&pending, nullptr, 0, 0, PM_REMOVE)) {
         TranslateMessage(&pending);
@@ -500,6 +509,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     check(!g.windows[1].thumbnailSourceIconic && boundedTransform(), 44);
     ActivateWindow(host);
     check(GetForegroundWindow() == host && g.windows[1].thumbnail == thumbnail, 35);
+
     DeleteObject(update);
     DestroyWindow(source);
     DestroyWindow(host);
